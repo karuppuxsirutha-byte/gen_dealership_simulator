@@ -7,6 +7,7 @@ const ROLE_NAMES = { owner: 'Owner', manager: 'Manager', sales: 'Salesperson' };
 const TX_LABEL = {
   sale: 'Sale', npc_sale: 'Walk-in sale', order: 'Stock order', commission: 'Commission', deposit: 'Deposit',
   withdraw: 'Withdrawal', upkeep: 'Upkeep', refund: 'Refund', delivery: 'Delivery', staff: 'Staff', price: 'Pricing', ownership: 'Ownership',
+  freight: 'Freight',
 };
 
 const B = { data: null, tab: 'overview', nearby: [], receivedAt: 0 };
@@ -147,6 +148,13 @@ function txList(list) {
 }
 
 /* ---------- inventory ---------- */
+function freightStatus(f) {
+  const parts = [];
+  if (f.transit) parts.push(`<span class="pos">${f.transit} on the road</span>${arr(f.drivers).length ? ` <span class="muted">(${arr(f.drivers).map(esc).join(', ')})</span>` : ''}`);
+  if (f.waiting) parts.push(`${f.waiting} waiting at the depot${f.autoIn != null ? ` · NPC freight in <span data-eta="${f.autoIn}" data-eta-prefix="">${fmtDuration(f.autoIn)}</span>` : ''}`);
+  return `<div class="small right">${parts.join('<br>')}</div>`;
+}
+
 function paneInventory(d) {
   const mgr = canB('manager');
   const rows = d.vehicles.map((v) => {
@@ -165,12 +173,14 @@ function paneInventory(d) {
   }).join('');
 
   const orders = d.orders.length
-    ? d.orders.map((o) => `<div class="tx"><div class="grow">${o.quantity}× ${esc(o.label)}<div class="muted small">${fmtMoney(o.cost)}</div></div>
-        <div class="muted small" data-eta="${o.eta}">arrives in ${fmtDuration(o.eta)}</div></div>`).join('')
+    ? d.orders.map((o) => `<div class="tx"><div class="grow">${o.remaining < o.quantity ? `${o.remaining} of ${o.quantity}` : o.quantity}× ${esc(o.label)}<div class="muted small">${fmtMoney(o.cost)}</div></div>
+        ${o.freight ? freightStatus(o.freight) : `<div class="muted small" data-eta="${o.eta}">arrives in ${fmtDuration(o.eta)}</div>`}</div>`).join('')
     : '<div class="muted pad">No pending orders.</div>';
 
   return `
-    ${mgr ? `<p class="hint">Restock by ordering at wholesale cost from business funds. Deliveries arrive after ${fmtDuration(d.settings.deliveryTime)}. Prices can be set between ${Math.round(d.settings.minMarkup * 100)}% and ${Math.round(d.settings.maxMarkup * 100)}% of cost.</p>` : ''}
+    ${mgr ? `<p class="hint">Restock by ordering at wholesale cost from business funds. ${d.settings.logistics
+        ? `Each vehicle waits at <b>${esc(d.settings.depotLabel)}</b> until a logistics driver (or your own staff) hauls it here, for a ${fmtMoney(d.settings.freightFee)} freight fee per vehicle.${d.settings.autoDeliverAfter ? ` Unclaimed shipments arrive by NPC freight after ${fmtDuration(d.settings.autoDeliverAfter)}.` : ''}`
+        : `Deliveries arrive after ${fmtDuration(d.settings.deliveryTime)}.`} Prices can be set between ${Math.round(d.settings.minMarkup * 100)}% and ${Math.round(d.settings.maxMarkup * 100)}% of cost.</p>` : ''}
     <div class="table-wrap">
       <table class="table">
         <thead><tr><th>Vehicle</th><th>Stock</th><th>Cost</th><th>Price</th><th>Margin</th>${mgr ? '<th>Restock</th>' : ''}</tr></thead>
@@ -322,7 +332,8 @@ $('#b-pane').addEventListener('click', async (e) => {
     const row = t.closest('[data-vid]');
     const v = d.vehicles.find((x) => x.id === Number(row.dataset.vid));
     const qty = Math.max(1, Math.floor(Number(row.querySelector('[data-qty]').value) || 1));
-    const ok = await askConfirm(`Order ${qty}× ${v.label}?`, `${fmtMoney(v.cost * qty)} will be taken from business funds.`, 'Order');
+    const fee = d.settings.logistics ? d.settings.freightFee * qty : 0;
+    const ok = await askConfirm(`Order ${qty}× ${v.label}?`, `${fmtMoney(v.cost * qty + fee)} will be taken from business funds${fee ? ` (${fmtMoney(v.cost * qty)} stock + ${fmtMoney(fee)} freight)` : ''}.`, 'Order');
     if (ok) bizAction('order', { vehicleId: v.id, quantity: qty });
   } else if (t.closest('[data-refresh-nearby]')) {
     refreshNearby();
@@ -369,7 +380,8 @@ setInterval(() => {
   const elapsed = (Date.now() - B.receivedAt) / 1000;
   $$('[data-eta]').forEach((el) => {
     const left = Number(el.dataset.eta) - elapsed;
-    el.textContent = left > 0 ? `arrives in ${fmtDuration(left)}` : 'arriving…';
+    const prefix = el.dataset.etaPrefix ?? 'arrives in ';
+    el.textContent = left > 0 ? `${prefix}${fmtDuration(left)}` : 'arriving…';
   });
 }, 1000);
 

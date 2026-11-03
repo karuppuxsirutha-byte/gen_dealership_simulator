@@ -44,6 +44,11 @@ Works with **Qbox**, **QBCore**, **ESX** and **standalone** (detected automatica
   - Accept their offer, counter, or decline.
   - Each customer has a hidden budget. Push too hard and they leave; insult them and reputation drops.
   - Reputation (0–100) controls how often customers come and how much they're willing to pay.
+- **Logistics job:** ordered stock doesn't just appear. Each vehicle waits as a shipment at the depot (Port of Los Santos by default).
+  - Players with the `logistics` job, or the dealership's own staff, open the depot board, take a job and drive the vehicle to the dealership's **Stock drop-off** point.
+  - Pay is the freight fee the dealership paid (base fee plus a per-km rate), scaled by the vehicle's condition. The damage deduction is refunded to the dealership.
+  - If the vehicle is wrecked, the driver runs out of time or disconnects, the shipment goes back on the board.
+  - Shipments nobody claims arrive by NPC freight after 30 minutes (configurable), so dealerships never get stuck.
 - **Management panel** (press **G** at the catalogue point): sales stats and a 7-day revenue chart, inventory and orders, the sales desk, staff, and finance with the transaction log.
 
 ## Installation
@@ -74,7 +79,8 @@ Works with **Qbox**, **QBCore**, **ESX** and **standalone** (detected automatica
 2. A player opens the catalogue and clicks **Buy business**. Unlimited stock becomes 0, so the dealership has to restock.
 3. Press **G** at the catalogue point. Deposit money under **Finance**, then order vehicles under **Inventory** and set your prices.
 4. Hire staff under **Staff** (stand next to them, then press **Refresh**).
-5. Stay at the dealership. Walk-in customers appear by the display cars: press **E** to negotiate. Or use the **Sales desk** to sell to a player standing nearby.
+5. Order arrivals: each car is a shipment at the depot. Haul it yourself, or wait for a logistics driver or NPC freight. Set a **Stock drop-off** point in the creator's Locations tab to say where drivers park.
+6. Stay at the dealership. Walk-in customers appear by the display cars: press **E** to negotiate. Or use the **Sales desk** to sell to a player standing nearby.
 
 Admins can revoke ownership from the creator. With `Config.Simulation.adminFullAccess`, admins can also open any owned dealership's panel.
 
@@ -98,6 +104,13 @@ Everything lives in `config.lua`: command name, ACE, interaction key and distanc
 - Whether owned dealerships still allow self-service purchases
 - AI customers: spawn rate, patience, negotiation rounds and ped models
 
+`Config.Logistics` covers the haulage job:
+- The job name (`''` lets anyone haul), and whether dealership staff can haul their own orders
+- The freight fee formula, minimum pay, time limit and NPC-freight fallback
+- The depot's board location and loading-bay spawns. **Check these on your map.** The defaults are at the Elysian Island docks.
+
+Set `Config.Logistics.enabled = false` to go back to timed deliveries.
+
 ## Exports (server)
 
 ```lua
@@ -115,5 +128,6 @@ exports.gen_dealership:GetDealership('pdm')  -- one dealership by identifier
 | `gen_dealership_business` | ownership, business funds, reputation, business price |
 | `gen_dealership_employees` | staff per dealership (role, commission) |
 | `gen_dealership_orders` | wholesale stock orders and delivery times |
+| `gen_dealership_shipments` | freight units waiting at the depot or in transit |
 | `gen_dealership_transactions` | business ledger (sales, orders, commissions, deposits…) |
 | `gen_dealership_owned` | owned vehicles, standalone mode only |

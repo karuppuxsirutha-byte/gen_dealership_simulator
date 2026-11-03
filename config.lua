@@ -94,6 +94,32 @@ Config.Simulation = {
     },
 }
 
+-- ===========================================================================
+-- Logistics: ordered stock is hauled from a depot to the dealership by players
+-- ===========================================================================
+Config.Logistics = {
+    enabled = true,              -- false = orders simply arrive after Config.Simulation.deliveryTime
+    job = 'logistics',           -- framework job that may haul shipments ('' = anyone)
+    staffCanDeliver = true,      -- dealership staff may haul their own dealership's orders
+    baseFee = 500,               -- freight fee per vehicle = baseFee + perKm * distance (charged on order)
+    perKm = 250,
+    minPayoutRatio = 0.25,       -- driver pay scales with vehicle condition, never below this share
+    timeLimit = 900,             -- seconds to complete a haul once the vehicle is taken
+    autoDeliverAfter = 1800,     -- unclaimed shipments arrive by NPC freight after this many seconds (0 = never)
+    dropRadius = 6.0,
+    platePrefix = 'CARGO',
+    depot = {
+        label = 'Port of Los Santos',
+        board = vector4(153.68, -3211.88, 5.91, 270.0),   -- where drivers open the logistics board
+        spawns = {                                          -- where shipment vehicles are parked
+            vector4(141.12, -3204.31, 5.85, 267.5),
+            vector4(141.12, -3199.31, 5.85, 267.5),
+            vector4(141.12, -3209.31, 5.85, 267.5),
+        },
+        blip = { sprite = 477, color = 21, scale = 0.8 },
+    },
+}
+
 Config.DefaultBlip = { enabled = true, sprite = 326, color = 3, scale = 0.8 }
 
 Config.Categories = {
@@ -136,6 +162,11 @@ Config.Text = {
     talk_customer      = '~INPUT_CONTEXT~ Talk to customer',
     delivered_garage   = 'The delivery spot was blocked, so your vehicle was sent to your garage.',
     staff_only         = 'Purchases here go through a salesperson.',
+    open_logistics     = '~INPUT_CONTEXT~ Open logistics board',
+    deliver_vehicle    = '~INPUT_CONTEXT~ Deliver vehicle',
+    haul_status        = 'Deliver %s to %s · %s left',
+    haul_failed        = 'Delivery failed: %s',
+    haul_paid          = 'Delivered %s (condition %d%%). You earned %s.',
     no_permission      = 'You do not have permission to do that.',
     not_enough_money   = 'You cannot afford this vehicle.',
     out_of_stock       = 'This vehicle is out of stock.',

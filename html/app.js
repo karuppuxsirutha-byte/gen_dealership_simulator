@@ -87,6 +87,7 @@ function normalizeDealership(d) {
   d.shop = d.shop || null;
   d.spawn = d.spawn || null;
   d.testdrive = d.testdrive || null;
+  d.delivery = d.delivery || null;
   d.business = Object.assign({ owned: false, ownerName: '', price: 0 }, d.business || {});
   return d;
 }
@@ -119,6 +120,7 @@ const LOCATIONS = [
   { key: 'shop', title: 'Catalogue point', desc: 'Players press E here to browse. The map blip is placed here too.', required: true, vehicle: false },
   { key: 'spawn', title: 'Delivery spawn', desc: 'Where purchased vehicles are delivered.', required: true, vehicle: true },
   { key: 'testdrive', title: 'Test drive spawn', desc: 'Optional. Falls back to the delivery spawn.', required: false, vehicle: true },
+  { key: 'delivery', title: 'Stock drop-off', desc: 'Optional. Logistics drivers park ordered stock here. Falls back to the delivery spawn.', required: false, vehicle: true },
 ];
 
 function openCreator(data) {

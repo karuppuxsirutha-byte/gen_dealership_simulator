@@ -55,7 +55,7 @@ function Biz.Load()
     for _, o in ipairs(MySQL.query.await('SELECT * FROM gen_dealership_orders WHERE delivered = 0 ORDER BY arrives_at') or {}) do
         local s = State[o.dealership_id]
         if s then
-            s.orders[#s.orders + 1] = { id = o.id, vehicleId = o.vehicle_id, model = o.model, label = o.label, quantity = o.quantity, cost = o.cost, arrives = o.arrives_at }
+            s.orders[#s.orders + 1] = { id = o.id, vehicleId = o.vehicle_id, model = o.model, label = o.label, quantity = o.quantity, remaining = o.quantity, cost = o.cost, arrives = o.arrives_at }
         end
     end
     Ready = true
@@ -241,6 +241,55 @@ function Biz.PayCommission(id, sellerSrc, price, label)
     return amount
 end
 
+--- Adds units to a vehicle's stock. Returns false when the vehicle no longer exists.
+function Biz.AddStock(id, vehicleId, qty)
+    local d = GetDealershipById(id)
+    local v = d and FindVehicle(d, vehicleId)
+    if not v then return false end
+    v.stock = math.max(v.stock, 0) + qty
+    DB.SetStock(v.id, v.stock)
+    return true, d, v
+end
+
+--- Called by logistics when one unit of an order has arrived (or been refunded).
+function Biz.OrderUnitDone(id, orderId)
+    local s = State[id]
+    if not s then return end
+    for i, o in ipairs(s.orders) do
+        if o.id == orderId then
+            o.remaining = (o.remaining or o.quantity) - 1
+            if o.remaining <= 0 then
+                table.remove(s.orders, i)
+                MySQL.update('UPDATE gen_dealership_orders SET delivered = 1 WHERE id = ?', { orderId })
+            end
+            return
+        end
+    end
+end
+
+function Biz.SetOrderRemaining(id, orderId, remaining)
+    local s = State[id]
+    if not s then return end
+    for i, o in ipairs(s.orders) do
+        if o.id == orderId then
+            if remaining <= 0 then
+                table.remove(s.orders, i)
+                MySQL.update('UPDATE gen_dealership_orders SET delivered = 1 WHERE id = ?', { orderId })
+            else
+                o.remaining = remaining
+            end
+            return
+        end
+    end
+end
+
+function Biz.NotifyManagers(id, msg, kind)
+    for ident, src in pairs(Biz.OnlineMap()) do
+        local role = Biz.RoleOf(id, ident)
+        if role == 'owner' or role == 'manager' then Bridge.Notify(src, msg, kind) end
+    end
+end
+
 function Biz.ResetOwnership(id, reason)
     local s = State[id]
     if not s or not s.owner then return end
@@ -304,7 +353,7 @@ function Biz.Snapshot(src, id)
     local t = now()
 
     local incoming = {}
-    for _, o in ipairs(s.orders) do incoming[o.vehicleId] = (incoming[o.vehicleId] or 0) + o.quantity end
+    for _, o in ipairs(s.orders) do incoming[o.vehicleId] = (incoming[o.vehicleId] or 0) + (o.remaining or o.quantity) end
 
     local vehicles = {}
     for _, v in ipairs(d.vehicles) do
@@ -340,7 +389,13 @@ function Biz.Snapshot(src, id)
 
     local orders = {}
     for _, o in ipairs(s.orders) do
-        orders[#orders + 1] = { id = o.id, label = o.label, quantity = o.quantity, cost = o.cost, eta = math.max(0, o.arrives - t) }
+        local entry = { id = o.id, label = o.label, quantity = o.quantity, remaining = o.remaining or o.quantity, cost = o.cost }
+        if o.arrives > 0 then
+            entry.eta = math.max(0, o.arrives - t)
+        else
+            entry.freight = Logistics.OrderSummary(o.id)
+        end
+        orders[#orders + 1] = entry
     end
 
     local transactions = MySQL.query.await([[
@@ -371,6 +426,10 @@ function Biz.Snapshot(src, id)
             upkeep = Sim.upkeep, upkeepInterval = Sim.upkeepInterval,
             customersEnabled = Sim.customers.enabled,
             dutyRadius = Sim.dutyRadius,
+            logistics = Logistics.Enabled(),
+            freightFee = Logistics.Enabled() and Logistics.FeeFor(d) or 0,
+            depotLabel = Config.Logistics.depot.label,
+            autoDeliverAfter = Config.Logistics.autoDeliverAfter,
         },
     }
 end
@@ -403,19 +462,33 @@ Actions.order = { min = 'manager', run = function(src, d, s, p)
     if not v then return { ok = false, error = T('vehicle_not_found') } end
     local qty = clampInt(p.quantity, 1, Sim.maxOrderQty)
     if not qty then return { ok = false, error = ('Order between 1 and %d units.'):format(Sim.maxOrderQty) } end
+    local useFreight = Logistics.Enabled()
+    local fee = useFreight and Logistics.FeeFor(d) or 0
     local total = (v.cost or 0) * qty
-    if s.balance < total then
-        return { ok = false, error = ('Not enough business funds (%s needed).'):format(Utils.FormatMoney(total)) }
+    if s.balance < total + fee * qty then
+        return { ok = false, error = ('Not enough business funds (%s needed).'):format(Utils.FormatMoney(total + fee * qty)) }
     end
 
     local actor = Bridge.GetName(src)
     Biz.AddBalance(d.id, -total, 'order', ('Ordered %dx %s'):format(qty, v.label), actor)
-    local order = { vehicleId = v.id, model = v.model, label = v.label, quantity = qty, cost = total, arrives = now() + Sim.deliveryTime }
+    if fee > 0 then
+        Biz.AddBalance(d.id, -fee * qty, 'freight', ('Freight for %dx %s'):format(qty, v.label), actor)
+    end
+
+    local order = {
+        vehicleId = v.id, model = v.model, label = v.label, quantity = qty, remaining = qty, cost = total,
+        arrives = useFreight and 0 or (now() + Sim.deliveryTime),
+    }
     s.orders[#s.orders + 1] = order
     order.id = MySQL.insert.await(
         'INSERT INTO gen_dealership_orders (dealership_id, vehicle_id, model, label, quantity, cost, arrives_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
         { d.id, v.id, v.model, v.label, qty, total, order.arrives }
     )
+
+    if useFreight then
+        Logistics.CreateShipments(d, v, order.id, qty, v.cost or 0, fee)
+        return { ok = true, message = ('Ordered %dx %s. Waiting for a driver at %s.'):format(qty, v.label, Config.Logistics.depot.label) }
+    end
     return { ok = true, message = ('Ordered %dx %s. Arrives in %d min.'):format(qty, v.label, math.ceil(Sim.deliveryTime / 60)) }
 end }
 
@@ -585,25 +658,15 @@ end)
 -- ---------------------------------------------------------------------------
 
 local function deliver(id, s, o)
-    local d = GetDealershipById(id)
-    local v = d and FindVehicle(d, o.vehicleId)
     MySQL.update('UPDATE gen_dealership_orders SET delivered = 1 WHERE id = ?', { o.id })
-    if not v then
+    local ok, d = Biz.AddStock(id, o.vehicleId, o.quantity)
+    if not ok then
         -- vehicle was removed from the catalogue: refund the order
         Biz.AddBalance(id, o.cost, 'refund', ('Refund: %dx %s (no longer sold)'):format(o.quantity, o.label), 'System')
         return false
     end
-    v.stock = math.max(v.stock, 0) + o.quantity
-    DB.SetStock(v.id, v.stock)
     Biz.Log(id, 'delivery', 0, ('Delivered %dx %s'):format(o.quantity, o.label), 'System')
-
-    local online = Biz.OnlineMap()
-    for ident, src in pairs(online) do
-        local role = Biz.RoleOf(id, ident)
-        if role == 'owner' or role == 'manager' then
-            Bridge.Notify(src, ('%s: %dx %s delivered.'):format(d.label, o.quantity, o.label), 'success')
-        end
-    end
+    Biz.NotifyManagers(id, ('%s: %dx %s delivered.'):format(d.label, o.quantity, o.label), 'success')
     return true
 end
 
@@ -618,7 +681,7 @@ CreateThread(function()
                 if #s.orders > 0 then
                     local remaining = {}
                     for _, o in ipairs(s.orders) do
-                        if o.arrives <= t then
+                        if o.arrives > 0 and o.arrives <= t then
                             if deliver(id, s, o) then delivered = true end
                         else
                             remaining[#remaining + 1] = o

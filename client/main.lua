@@ -13,11 +13,12 @@ State = {
     manageId = nil,
     negotiating = false,
     offerOpen = false,
+    logisticsOpen = false,
 }
 
 function UIBusy()
     return State.shopOpen or State.creatorOpen or State.placing or State.testDrive ~= nil
-        or State.manageOpen or State.negotiating or State.offerOpen
+        or State.manageOpen or State.negotiating or State.offerOpen or State.logisticsOpen
 end
 
 local Blips = {}
@@ -247,6 +248,7 @@ function CloseUI()
     State.manageId = nil
     State.negotiating = false
     State.offerOpen = false
+    State.logisticsOpen = false
 end
 
 local function openShop(d)

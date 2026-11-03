@@ -10,6 +10,7 @@ local schema = {
         `shop` LONGTEXT NULL,
         `spawn` LONGTEXT NULL,
         `testdrive` LONGTEXT NULL,
+        `delivery` LONGTEXT NULL,
         `displays` LONGTEXT NULL,
         `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (`id`),
@@ -97,6 +98,25 @@ local schema = {
         CONSTRAINT `fk_gen_dealership_orders` FOREIGN KEY (`dealership_id`) REFERENCES `gen_dealerships` (`id`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
 
+    [[CREATE TABLE IF NOT EXISTS `gen_dealership_shipments` (
+        `id` INT NOT NULL AUTO_INCREMENT,
+        `order_id` INT NOT NULL,
+        `dealership_id` INT NOT NULL,
+        `vehicle_id` INT NOT NULL,
+        `model` VARCHAR(32) NOT NULL,
+        `label` VARCHAR(100) NOT NULL,
+        `unit_cost` INT NOT NULL DEFAULT 0,
+        `fee` INT NOT NULL DEFAULT 0,
+        `status` VARCHAR(16) NOT NULL DEFAULT 'waiting',
+        `driver` VARCHAR(100) NOT NULL DEFAULT '',
+        `payout` INT NOT NULL DEFAULT 0,
+        `auto_at` INT NOT NULL DEFAULT 0,
+        `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (`id`),
+        KEY `status` (`status`),
+        CONSTRAINT `fk_gen_dealership_shipments` FOREIGN KEY (`dealership_id`) REFERENCES `gen_dealerships` (`id`) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+
     [[CREATE TABLE IF NOT EXISTS `gen_dealership_transactions` (
         `id` INT NOT NULL AUTO_INCREMENT,
         `dealership_id` INT NOT NULL,
@@ -113,6 +133,7 @@ local schema = {
 
 -- Columns added after the first release (for databases created by older versions)
 local migrations = {
+    { 'gen_dealerships', 'delivery', 'LONGTEXT NULL AFTER `testdrive`' },
     { 'gen_dealership_vehicles', 'cost', 'INT NOT NULL DEFAULT 0 AFTER `price`' },
     { 'gen_dealership_sales', 'seller', "VARCHAR(100) NOT NULL DEFAULT '' AFTER `payment`" },
     { 'gen_dealership_sales', 'kind', "VARCHAR(16) NOT NULL DEFAULT 'shop' AFTER `seller`" },
@@ -167,6 +188,7 @@ function DB.LoadAll()
             shop = decode(r.shop, nil),
             spawn = decode(r.spawn, nil),
             testdrive = decode(r.testdrive, nil),
+            delivery = decode(r.delivery, nil),
             displays = decode(r.displays, {}),
             vehicles = {},
         }
@@ -199,19 +221,19 @@ end
 function DB.Save(d, keepBusinessFields)
     local params = {
         d.name, d.label, d.job or '', encode(d.blip),
-        encode(d.shop), encode(d.spawn), encode(d.testdrive), encode(d.displays),
+        encode(d.shop), encode(d.spawn), encode(d.testdrive), encode(d.delivery), encode(d.displays),
     }
 
     local id = d.id
     if id then
         params[#params + 1] = id
         MySQL.update.await(
-            'UPDATE gen_dealerships SET name = ?, label = ?, job = ?, blip = ?, shop = ?, spawn = ?, testdrive = ?, displays = ? WHERE id = ?',
+            'UPDATE gen_dealerships SET name = ?, label = ?, job = ?, blip = ?, shop = ?, spawn = ?, testdrive = ?, delivery = ?, displays = ? WHERE id = ?',
             params
         )
     else
         id = MySQL.insert.await(
-            'INSERT INTO gen_dealerships (name, label, job, blip, shop, spawn, testdrive, displays) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO gen_dealerships (name, label, job, blip, shop, spawn, testdrive, delivery, displays) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
             params
         )
     end

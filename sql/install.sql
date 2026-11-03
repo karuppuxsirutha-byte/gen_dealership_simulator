@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS `gen_dealerships` (
   `shop` LONGTEXT NULL,
   `spawn` LONGTEXT NULL,
   `testdrive` LONGTEXT NULL,
+  `delivery` LONGTEXT NULL,
   `displays` LONGTEXT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -92,6 +93,25 @@ CREATE TABLE IF NOT EXISTS `gen_dealership_orders` (
   PRIMARY KEY (`id`),
   KEY `pending` (`delivered`),
   CONSTRAINT `fk_gen_dealership_orders` FOREIGN KEY (`dealership_id`) REFERENCES `gen_dealerships` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `gen_dealership_shipments` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `order_id` INT NOT NULL,
+  `dealership_id` INT NOT NULL,
+  `vehicle_id` INT NOT NULL,
+  `model` VARCHAR(32) NOT NULL,
+  `label` VARCHAR(100) NOT NULL,
+  `unit_cost` INT NOT NULL DEFAULT 0,
+  `fee` INT NOT NULL DEFAULT 0,
+  `status` VARCHAR(16) NOT NULL DEFAULT 'waiting',
+  `driver` VARCHAR(100) NOT NULL DEFAULT '',
+  `payout` INT NOT NULL DEFAULT 0,
+  `auto_at` INT NOT NULL DEFAULT 0,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `status` (`status`),
+  CONSTRAINT `fk_gen_dealership_shipments` FOREIGN KEY (`dealership_id`) REFERENCES `gen_dealerships` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `gen_dealership_transactions` (

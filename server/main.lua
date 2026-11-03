@@ -25,6 +25,7 @@ end
 function GetDealershipById(id) return ById[tonumber(id)] end
 function GetAllDealerships() return Dealerships end
 function BroadcastDealerships(target) broadcast(target) end
+function IssuePlate(src, plate) issuedPlates[src] = plate end
 
 local function trim(s)
     if type(s) ~= 'string' then return nil end
@@ -200,6 +201,7 @@ local function sanitizeDealership(data)
         shop = shop,
         spawn = spawn,
         testdrive = sanitizeVec4(data.testdrive),
+        delivery = sanitizeVec4(data.delivery),
         displays = displays,
         vehicles = vehicles,
     }
@@ -213,6 +215,7 @@ MySQL.ready(function()
     DB.Init()
     Biz.Load()
     reload()
+    Logistics.Load()
     Loaded = true
     broadcast()
     print(('^2[gen_dealership]^0 Loaded %d dealership(s) | framework: %s'):format(#Dealerships, Bridge.Framework))
@@ -273,6 +276,7 @@ RegisterCallback('creator:delete', function(src, id)
     if not id or not ById[id] then return { ok = false, error = 'Unknown dealership.' } end
 
     DB.Delete(id)
+    Logistics.Forget(id)
     Biz.Forget(id)
     RemoveCustomersFor(id)
     reload()

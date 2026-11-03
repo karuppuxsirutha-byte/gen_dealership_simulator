@@ -304,3 +304,11 @@ input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
 .result.good { background: rgba(46, 204, 143, .12); color: var(--good); }
 .result.bad { background: rgba(255, 90, 106, .1); color: var(--bad); }
 .result .small { opacity: .8; margin-top: 2px; }
+
+/* ======================= logistics ======================= */
+.window.medium { width: min(760px, 92vw); height: min(640px, 86vh); }
+.right { text-align: right; }
+.thumb.mini { width: 96px; height: 56px; flex-shrink: 0; border-radius: 8px; }
+.thumb.mini .ph { font-size: 22px; }
+.card-box.haul { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; border-color: rgba(245, 185, 66, .5); background: linear-gradient(120deg, rgba(245, 185, 66, .12), transparent); }
+.empty-state { text-align: center; padding: 50px 0; }
