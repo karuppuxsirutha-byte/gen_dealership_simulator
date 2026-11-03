@@ -18,6 +18,7 @@ files {
 
 shared_scripts {
     'config.lua',
+    'locales/*.lua',
     'shared/utils.lua',
 }
 
@@ -33,6 +34,8 @@ client_scripts {
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
     'bridge/server.lua',
+    'server/webhooks_config.lua',
+    'server/webhooks.lua',
     'server/callback.lua',
     'server/database.lua',
     'server/business.lua',

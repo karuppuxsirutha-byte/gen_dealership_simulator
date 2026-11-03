@@ -1,7 +1,8 @@
 Utils = {}
 
 function Utils.T(key, ...)
-    local str = Config.Text[key] or key
+    local lang = Locales[Config.Locale] or Locales.en
+    local str = lang[key] or Locales.en[key] or key
     if select('#', ...) > 0 then
         return str:format(...)
     end

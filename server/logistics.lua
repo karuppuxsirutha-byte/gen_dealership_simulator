@@ -280,6 +280,12 @@ RegisterCallback('logistics:deliver', function(src, id)
         Biz.AddBalance(sh.dealershipId, refund, 'refund', ('Freight damage refund: %s (%d%% condition)'):format(sh.label, math.floor(condition * 100)), 'System')
     end
     arrive(sh, 'Driver', sh.driverName)
+    Webhooks.Send('logistics', ('Freight delivered · %s'):format(d.label), nil, {
+        Webhooks.Field('Vehicle', sh.label),
+        Webhooks.Field('Driver', Webhooks.Who(src)),
+        Webhooks.Field('Condition', ('%d%%'):format(math.floor(condition * 100))),
+        Webhooks.Field('Paid', Utils.FormatMoney(payout)),
+    })
 
     return { ok = true, payout = payout, condition = math.floor(condition * 100), label = sh.label, payoutText = Utils.FormatMoney(payout) }
 end)

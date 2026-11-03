@@ -258,6 +258,12 @@ local function closeDeal(src, c, d, v, price)
     local commission = Biz.PayCommission(d.id, src, price, v.label)
     Biz.AddReputation(d.id, price <= c.listPrice and 2 or 1)
     DB.LogSale(d.name, 'npc:' .. c.name, v.model, '-', price, 'bank', Bridge.GetIdentifier(src) or '', 'npc')
+    Webhooks.Send('sales', ('Walk-in sale · %s'):format(d.label), nil, {
+        Webhooks.Field('Vehicle', v.label),
+        Webhooks.Field('Price', Utils.FormatMoney(price)),
+        Webhooks.Field('Customer', c.name),
+        Webhooks.Field('Salesperson', sellerName),
+    }, 'good')
     finishCustomer(c, d)
     BroadcastDealerships()
     return negotiationView(c, d, v, src, {

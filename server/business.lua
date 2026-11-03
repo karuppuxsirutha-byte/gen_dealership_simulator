@@ -514,6 +514,7 @@ Actions.hire = { min = 'manager', run = function(src, d, s, p, myRole)
         { d.id, ident, e.name, role, e.commission }
     )
     Biz.Log(d.id, 'staff', 0, ('Hired %s as %s'):format(e.name, ROLE_LABEL[role]), Bridge.GetName(src))
+    Webhooks.Send('business', ('Staff hired · %s'):format(d.label), ('%s hired **%s** as %s'):format(Bridge.GetName(src), e.name, ROLE_LABEL[role]))
     Biz.PushRoles(target)
     Bridge.Notify(target, ('You were hired at %s as %s.'):format(d.label, ROLE_LABEL[role]), 'success')
     return { ok = true, message = ('%s hired.'):format(e.name) }
@@ -544,6 +545,7 @@ Actions.fire = { min = 'manager', run = function(src, d, s, p, myRole)
     s.employees[e.identifier] = nil
     MySQL.query('DELETE FROM gen_dealership_employees WHERE dealership_id = ? AND identifier = ?', { d.id, e.identifier })
     Biz.Log(d.id, 'staff', 0, ('Let go of %s'):format(e.name), Bridge.GetName(src))
+    Webhooks.Send('business', ('Staff let go · %s'):format(d.label), ('%s let go of **%s**'):format(Bridge.GetName(src), e.name), nil, 'warn')
     Biz.PushRolesTo({ e.identifier })
     local online = Biz.OnlineMap()
     if online[e.identifier] then Bridge.Notify(online[e.identifier], ('You no longer work at %s.'):format(d.label), 'error') end
@@ -564,6 +566,11 @@ Actions.withdraw = { min = 'owner', run = function(src, d, s, p)
     if not amount then return { ok = false, error = 'Enter a valid amount.' } end
     if s.balance < amount then return { ok = false, error = 'Not enough business funds.' } end
     Biz.AddBalance(d.id, -amount, 'withdraw', 'Withdrawal', Bridge.GetName(src))
+    Webhooks.Send('business', ('Withdrawal · %s'):format(d.label), nil, {
+        Webhooks.Field('By', Webhooks.Who(src)),
+        Webhooks.Field('Amount', Utils.FormatMoney(amount)),
+        Webhooks.Field('Balance left', Utils.FormatMoney(s.balance)),
+    }, amount >= 100000 and 'warn' or 'info')
     Bridge.AddMoney(src, 'bank', amount, 'dealership-withdraw')
     return { ok = true, message = ('Withdrew %s.'):format(Utils.FormatMoney(amount)) }
 end }
@@ -580,6 +587,10 @@ Actions.sellBusiness = { min = 'owner', snapshot = false, run = function(src, d,
     if s.owner ~= Bridge.GetIdentifier(src) then return { ok = false, error = 'Only the real owner can sell the business.' } end
     local payout = math.floor(s.price * Sim.sellBackRatio) + math.max(s.balance, 0)
     Bridge.AddMoney(src, 'bank', payout, 'dealership-sold')
+    Webhooks.Send('business', ('Business sold back · %s'):format(d.label), nil, {
+        Webhooks.Field('Owner', Webhooks.Who(src)),
+        Webhooks.Field('Payout', Utils.FormatMoney(payout)),
+    }, 'warn')
     Biz.ResetOwnership(d.id, ('Business sold back by %s'):format(s.ownerName))
     return { ok = true, closed = true, message = ('You sold %s for %s (including remaining funds).'):format(d.label, Utils.FormatMoney(payout)) }
 end }
@@ -650,6 +661,10 @@ RegisterCallback('biz:buyBusiness', function(src, id, method)
     Biz.Refresh(id)
     Biz.PushRoles(src)
     print(('[gen_dealership] %s bought dealership "%s"'):format(GetPlayerName(src), d.name))
+    Webhooks.Send('business', ('Business bought · %s'):format(d.label), nil, {
+        Webhooks.Field('Owner', Webhooks.Who(src)),
+        Webhooks.Field('Price', Utils.FormatMoney(s.price)),
+    }, 'good')
     return { ok = true, message = ('You now own %s! Press G at the catalogue point to manage it.'):format(d.label) }
 end)
 

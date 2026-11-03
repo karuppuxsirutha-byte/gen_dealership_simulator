@@ -267,6 +267,11 @@ RegisterCallback('creator:save', function(src, data)
     reload()
     broadcast()
     print(('[gen_dealership] %s saved dealership "%s" (#%s)'):format(GetPlayerName(src), d.name, idOrErr))
+    Webhooks.Send('admin', 'Dealership saved', ('**%s** (`%s`, #%s)'):format(d.label, d.name, idOrErr), {
+        Webhooks.Field('Admin', Webhooks.Who(src)),
+        Webhooks.Field('Vehicles', #d.vehicles),
+        Webhooks.Field('Display spots', #d.displays),
+    })
     return { ok = true, id = idOrErr, dealerships = Dealerships }
 end)
 
@@ -282,6 +287,7 @@ RegisterCallback('creator:delete', function(src, id)
     reload()
     broadcast()
     print(('[gen_dealership] %s deleted dealership #%s'):format(GetPlayerName(src), id))
+    Webhooks.Send('admin', 'Dealership deleted', ('#%s'):format(id), { Webhooks.Field('Admin', Webhooks.Who(src)) }, 'bad')
     return { ok = true, dealerships = Dealerships }
 end)
 
@@ -291,6 +297,7 @@ RegisterCallback('creator:resetOwner', function(src, id)
     if not id or not Biz.IsOwned(id) then return { ok = false, error = 'This dealership has no owner.' } end
     Biz.ResetOwnership(id, ('Ownership revoked by admin %s'):format(GetPlayerName(src)))
     print(('[gen_dealership] %s revoked ownership of dealership #%s'):format(GetPlayerName(src), id))
+    Webhooks.Send('admin', 'Ownership revoked', ('Dealership #%s'):format(id), { Webhooks.Field('Admin', Webhooks.Who(src)) }, 'warn')
     return { ok = true, dealerships = Dealerships }
 end)
 
@@ -351,6 +358,14 @@ function ProcessSale(buyer, d, v, method, price, opts)
     end
 
     DB.LogSale(d.name, Bridge.GetIdentifier(buyer), v.model, plate, price, method, opts.sellerIdentifier, opts.kind or 'shop')
+    Webhooks.Send('sales', ('Vehicle sold · %s'):format(d.label), nil, {
+        Webhooks.Field('Vehicle', ('%s (`%s`)'):format(v.label, v.model)),
+        Webhooks.Field('Price', Utils.FormatMoney(price)),
+        Webhooks.Field('Plate', plate),
+        Webhooks.Field('Buyer', Webhooks.Who(buyer)),
+        Webhooks.Field('Payment', method),
+        Webhooks.Field('Sold by', opts.sellerName or 'Self-service'),
+    }, 'good')
     issuedPlates[buyer] = plate
     purchaseLock[buyer] = nil
     if reserved then broadcast() end
