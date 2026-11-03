@@ -67,6 +67,11 @@ local schema = {
         `owner_since` INT NOT NULL DEFAULT 0,
         `balance` BIGINT NOT NULL DEFAULT 0,
         `reputation` INT NOT NULL DEFAULT 50,
+        `target_count` INT NOT NULL DEFAULT 0,
+        `target_bonus` INT NOT NULL DEFAULT 0,
+        `ad_label` VARCHAR(64) NOT NULL DEFAULT '',
+        `ad_boost` INT NOT NULL DEFAULT 0,
+        `ad_until` INT NOT NULL DEFAULT 0,
         PRIMARY KEY (`dealership_id`),
         CONSTRAINT `fk_gen_dealership_business` FOREIGN KEY (`dealership_id`) REFERENCES `gen_dealerships` (`id`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
@@ -78,6 +83,7 @@ local schema = {
         `name` VARCHAR(100) NOT NULL,
         `role` VARCHAR(16) NOT NULL DEFAULT 'sales',
         `commission` INT NOT NULL DEFAULT 10,
+        `wage` INT NOT NULL DEFAULT -1,
         `hired_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (`id`),
         UNIQUE KEY `dealership_identifier` (`dealership_id`, `identifier`),
@@ -156,6 +162,26 @@ local schema = {
         KEY `status` (`status`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
 
+    [[CREATE TABLE IF NOT EXISTS `gen_dealership_shifts` (
+        `id` INT NOT NULL AUTO_INCREMENT,
+        `dealership_id` INT NOT NULL,
+        `identifier` VARCHAR(100) NOT NULL,
+        `name` VARCHAR(100) NOT NULL,
+        `started` INT NOT NULL,
+        `ended` INT NOT NULL DEFAULT 0,
+        `earned` INT NOT NULL DEFAULT 0,
+        PRIMARY KEY (`id`),
+        KEY `dealership_id` (`dealership_id`),
+        CONSTRAINT `fk_gen_dealership_shifts` FOREIGN KEY (`dealership_id`) REFERENCES `gen_dealerships` (`id`) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+
+    [[CREATE TABLE IF NOT EXISTS `gen_dealership_bonuses` (
+        `dealership_id` INT NOT NULL,
+        `identifier` VARCHAR(100) NOT NULL,
+        `week` INT NOT NULL,
+        PRIMARY KEY (`dealership_id`, `identifier`, `week`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+
     [[CREATE TABLE IF NOT EXISTS `gen_dealership_transactions` (
         `id` INT NOT NULL AUTO_INCREMENT,
         `dealership_id` INT NOT NULL,
@@ -174,6 +200,12 @@ local schema = {
 local migrations = {
     { 'gen_dealerships', 'delivery', 'LONGTEXT NULL AFTER `testdrive`' },
     { 'gen_dealerships', 'preview', 'LONGTEXT NULL AFTER `delivery`' },
+    { 'gen_dealership_employees', 'wage', 'INT NOT NULL DEFAULT -1 AFTER `commission`' },
+    { 'gen_dealership_business', 'target_count', 'INT NOT NULL DEFAULT 0' },
+    { 'gen_dealership_business', 'target_bonus', 'INT NOT NULL DEFAULT 0' },
+    { 'gen_dealership_business', 'ad_label', "VARCHAR(64) NOT NULL DEFAULT ''" },
+    { 'gen_dealership_business', 'ad_boost', 'INT NOT NULL DEFAULT 0' },
+    { 'gen_dealership_business', 'ad_until', 'INT NOT NULL DEFAULT 0' },
     { 'gen_dealership_vehicles', 'cost', 'INT NOT NULL DEFAULT 0 AFTER `price`' },
     { 'gen_dealership_sales', 'seller', "VARCHAR(100) NOT NULL DEFAULT '' AFTER `payment`" },
     { 'gen_dealership_sales', 'kind', "VARCHAR(16) NOT NULL DEFAULT 'shop' AFTER `seller`" },
@@ -331,7 +363,7 @@ function DB.SetPrice(vehicleId, price)
 end
 
 function DB.LogSale(dealership, identifier, model, plate, price, payment, seller, kind)
-    MySQL.insert(
+    MySQL.insert.await(
         'INSERT INTO gen_dealership_sales (dealership, identifier, model, plate, price, payment, seller, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         { dealership, identifier or 'unknown', model, plate, price, payment, seller or '', kind or 'shop' }
     )

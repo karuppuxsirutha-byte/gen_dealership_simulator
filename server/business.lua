@@ -29,7 +29,11 @@ end
 -- ---------------------------------------------------------------------------
 
 local function blank()
-    return { price = 0, owner = nil, ownerName = '', ownerSince = 0, balance = 0, reputation = Sim.startReputation, employees = {}, orders = {} }
+    return {
+        price = 0, owner = nil, ownerName = '', ownerSince = 0, balance = 0, reputation = Sim.startReputation,
+        targetCount = 0, targetBonus = 0, adLabel = '', adBoost = 0, adUntil = 0,
+        employees = {}, orders = {},
+    }
 end
 
 function Biz.Load()
@@ -42,6 +46,11 @@ function Biz.Load()
             ownerSince = r.owner_since or 0,
             balance = tonumber(r.balance) or 0,
             reputation = r.reputation,
+            targetCount = r.target_count or 0,
+            targetBonus = r.target_bonus or 0,
+            adLabel = r.ad_label or '',
+            adBoost = r.ad_boost or 0,
+            adUntil = r.ad_until or 0,
             employees = {},
             orders = {},
         }
@@ -49,7 +58,8 @@ function Biz.Load()
     for _, e in ipairs(MySQL.query.await('SELECT * FROM gen_dealership_employees') or {}) do
         local s = State[e.dealership_id]
         if s then
-            s.employees[e.identifier] = { identifier = e.identifier, name = e.name, role = e.role, commission = e.commission }
+            local wage = (e.wage and e.wage >= 0) and e.wage or (Sim.wages[e.role] or 0)
+            s.employees[e.identifier] = { identifier = e.identifier, name = e.name, role = e.role, commission = e.commission, wage = wage }
         end
     end
     for _, o in ipairs(MySQL.query.await('SELECT * FROM gen_dealership_orders WHERE delivered = 0 ORDER BY arrives_at') or {}) do
@@ -74,6 +84,7 @@ end
 function Biz.Peek(id) return State[id] end
 function Biz.IsOwned(id) local s = State[id] return s ~= nil and s.owner ~= nil end
 function Biz.Forget(id) State[id] = nil Dirty[id] = nil end
+function Biz.MarkDirty(id) Dirty[id] = true end
 
 local function flush()
     local ids = {}
@@ -83,11 +94,14 @@ local function flush()
         local s = State[id]
         if s and GetDealershipById(id) then
             local ok, err = pcall(MySQL.update.await, [[
-                INSERT INTO gen_dealership_business (dealership_id, price, owner, owner_name, owner_since, balance, reputation)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO gen_dealership_business (dealership_id, price, owner, owner_name, owner_since, balance, reputation, target_count, target_bonus, ad_label, ad_boost, ad_until)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE price = VALUES(price), owner = VALUES(owner), owner_name = VALUES(owner_name),
-                    owner_since = VALUES(owner_since), balance = VALUES(balance), reputation = VALUES(reputation)
-            ]], { id, s.price, s.owner or '', s.ownerName or '', s.ownerSince or 0, s.balance, s.reputation })
+                    owner_since = VALUES(owner_since), balance = VALUES(balance), reputation = VALUES(reputation),
+                    target_count = VALUES(target_count), target_bonus = VALUES(target_bonus),
+                    ad_label = VALUES(ad_label), ad_boost = VALUES(ad_boost), ad_until = VALUES(ad_until)
+            ]], { id, s.price, s.owner or '', s.ownerName or '', s.ownerSince or 0, s.balance, s.reputation,
+                s.targetCount or 0, s.targetBonus or 0, s.adLabel or '', s.adBoost or 0, s.adUntil or 0 })
             if not ok then print(('^1[gen_dealership] business flush failed for #%s: %s^0'):format(id, err)) end
         end
     end
@@ -296,7 +310,9 @@ function Biz.ResetOwnership(id, reason)
     local affected = { s.owner }
     for ident in pairs(s.employees) do affected[#affected + 1] = ident end
 
+    Staffing.ClockOutAt(id)
     s.owner, s.ownerName, s.ownerSince, s.balance = nil, '', 0, 0
+    s.adUntil, s.targetCount, s.targetBonus = 0, 0, 0
     s.employees = {}
     Dirty[id] = true
     MySQL.query('DELETE FROM gen_dealership_employees WHERE dealership_id = ?', { id })
@@ -365,19 +381,21 @@ function Biz.Snapshot(src, id)
         }
     end
 
-    local function staffEntry(ident, name, r, commission)
+    local function staffEntry(ident, name, r, commission, wage)
         local esrc = online[ident]
+        local shift = esrc and Staffing.ShiftOf(esrc)
         return {
-            identifier = ident, name = name, role = r, roleLabel = ROLE_LABEL[r], commission = commission,
+            identifier = ident, name = name, role = r, roleLabel = ROLE_LABEL[r], commission = commission, wage = wage or 0,
             online = esrc ~= nil,
-            onDuty = esrc ~= nil and d.shop ~= nil and IsNear(esrc, d.shop, Sim.dutyRadius),
+            clockedIn = shift ~= nil and shift.dealershipId == d.id,
+            onDuty = esrc ~= nil and IsStaffOnDuty(esrc, d),
             me = ident == myIdent,
         }
     end
-    local employees = { staffEntry(s.owner, s.ownerName, 'owner', 0) }
+    local employees = { staffEntry(s.owner, s.ownerName, 'owner', 0, 0) }
     local onDuty = employees[1].onDuty and 1 or 0
     local list = {}
-    for _, e in pairs(s.employees) do list[#list + 1] = staffEntry(e.identifier, e.name, e.role, e.commission) end
+    for _, e in pairs(s.employees) do list[#list + 1] = staffEntry(e.identifier, e.name, e.role, e.commission, e.wage) end
     table.sort(list, function(a, b)
         if RANK[a.role] ~= RANK[b.role] then return RANK[a.role] > RANK[b.role] end
         return a.name < b.name
@@ -406,12 +424,28 @@ function Biz.Snapshot(src, id)
     ]], { id, s.ownerSince or 0 }) or {}
 
     local me = s.employees[myIdent or '']
+    local myShift = Staffing.ShiftOf(src)
+    local campaigns = {}
+    for _, c in ipairs(Config.Advertising.campaigns) do
+        campaigns[#campaigns + 1] = { id = c.id, label = c.label, cost = c.cost, boost = c.boost, duration = c.duration, announce = c.announce }
+    end
 
     return {
         id = d.id, name = d.name, label = d.label,
         role = role, roleLabel = ROLE_LABEL[role],
         ownerName = s.ownerName, balance = s.balance, reputation = s.reputation,
         myCommission = me and me.commission or 0,
+        myWage = me and me.wage or 0,
+        clockedIn = myShift ~= nil and myShift.dealershipId == d.id,
+        clockedElsewhere = myShift ~= nil and myShift.dealershipId ~= d.id,
+        shiftStarted = myShift and myShift.started or nil,
+        shifts = Staffing.RecentShifts(id),
+        leaderboard = Staffing.Leaderboard(d, myIdent),
+        rank = Staffing.Rank(d),
+        target = { count = s.targetCount or 0, bonus = s.targetBonus or 0, mine = myIdent and Staffing.WeeklyCount(d, myIdent) or 0 },
+        market = Market.Public(),
+        ad = Market.AdPublic(id),
+        campaigns = campaigns,
         vehicles = vehicles, employees = employees, orders = orders,
         used = UsedLot.ListFull(id),
         transactions = transactions,
@@ -431,6 +465,8 @@ function Biz.Snapshot(src, id)
             freightFee = Logistics.Enabled() and Logistics.FeeFor(d) or 0,
             depotLabel = Config.Logistics.depot.label,
             autoDeliverAfter = Config.Logistics.autoDeliverAfter,
+            requireClockIn = Sim.requireClockIn,
+            maxWage = Sim.maxWage,
         },
     }
 end
@@ -458,6 +494,47 @@ Actions.setPrice = { min = 'manager', run = function(src, d, s, p)
     return { ok = true }
 end }
 
+Actions.clock = { min = 'sales', run = function(src, d)
+    local shift = Staffing.ShiftOf(src)
+    if shift then
+        Staffing.ClockOut(src)
+        return { ok = true, message = T('clocked_out') }
+    end
+    if not IsNear(src, d.shop, Sim.dutyRadius) then return { ok = false, error = T('clock_in_far') } end
+    local ok, err = Staffing.ClockIn(src, d)
+    if not ok then return { ok = false, error = err } end
+    return { ok = true, message = T('clocked_in', d.label) }
+end }
+
+Actions.setTarget = { min = 'owner', run = function(src, d, s, p)
+    local count = clampInt(p.count, 0, 500)
+    local bonus = clampInt(p.bonus, 0, 10000000)
+    if not count or not bonus then return { ok = false, error = 'Enter a valid target and bonus.' } end
+    s.targetCount, s.targetBonus = count, bonus
+    Biz.MarkDirty(d.id)
+    Biz.Log(d.id, 'staff', 0, count > 0 and ('Weekly target set: %d sales → %s bonus'):format(count, Utils.FormatMoney(bonus)) or 'Weekly target removed', Bridge.GetName(src))
+    return { ok = true, message = 'Weekly target saved.' }
+end }
+
+Actions.advertise = { min = 'manager', run = function(src, d, s, p)
+    local c = Market.FindCampaign(p.id)
+    if not c then return { ok = false, error = 'Unknown campaign.' } end
+    if (s.adUntil or 0) > os.time() then return { ok = false, error = T('ad_running') } end
+    if s.balance < c.cost then return { ok = false, error = ('Not enough business funds (%s needed).'):format(Utils.FormatMoney(c.cost)) } end
+
+    local message = type(p.message) == 'string' and p.message:gsub('[<>]', ''):sub(1, 90) or ''
+    s.adLabel, s.adBoost, s.adUntil = c.label, c.boost, os.time() + c.duration
+    Biz.AddBalance(d.id, -c.cost, 'advert', ('%s campaign (%d min)'):format(c.label, math.floor(c.duration / 60)), Bridge.GetName(src))
+    if c.announce then
+        local text = message ~= '' and message or T('ad_default', d.label)
+        TriggerClientEvent('gen_dealership:advert', -1, d.label, text)
+    end
+    Webhooks.Send('business', ('Advert · %s'):format(d.label), message ~= '' and message or nil, {
+        Webhooks.Field('Campaign', c.label), Webhooks.Field('Cost', Utils.FormatMoney(c.cost)), Webhooks.Field('By', Webhooks.Who(src)),
+    })
+    return { ok = true, message = T('ad_started', c.label) }
+end }
+
 Actions.setUsedPrice = { min = 'manager', run = function(src, d, s, p)
     local entry = UsedLot.Find(d.id, p.id)
     if not entry then return { ok = false, error = T('vehicle_not_found') } end
@@ -476,7 +553,8 @@ Actions.order = { min = 'manager', run = function(src, d, s, p)
     if not qty then return { ok = false, error = ('Order between 1 and %d units.'):format(Sim.maxOrderQty) } end
     local useFreight = Logistics.Enabled()
     local fee = useFreight and Logistics.FeeFor(d) or 0
-    local total = (v.cost or 0) * qty
+    local unitCost = math.floor((v.cost or 0) * Market.CostMultiplier(v.category))
+    local total = unitCost * qty
     if s.balance < total + fee * qty then
         return { ok = false, error = ('Not enough business funds (%s needed).'):format(Utils.FormatMoney(total + fee * qty)) }
     end
@@ -498,7 +576,7 @@ Actions.order = { min = 'manager', run = function(src, d, s, p)
     )
 
     if useFreight then
-        Logistics.CreateShipments(d, v, order.id, qty, v.cost or 0, fee)
+        Logistics.CreateShipments(d, v, order.id, qty, unitCost, fee)
         return { ok = true, message = ('Ordered %dx %s. Waiting for a driver at %s.'):format(qty, v.label, Config.Logistics.depot.label) }
     end
     return { ok = true, message = ('Ordered %dx %s. Arrives in %d min.'):format(qty, v.label, math.ceil(Sim.deliveryTime / 60)) }
@@ -519,11 +597,11 @@ Actions.hire = { min = 'manager', run = function(src, d, s, p, myRole)
     for _ in pairs(s.employees) do count = count + 1 end
     if count >= Sim.maxEmployees then return { ok = false, error = ('Staff limit reached (%d).'):format(Sim.maxEmployees) } end
 
-    local e = { identifier = ident, name = Bridge.GetName(target), role = role, commission = Sim.commission[role] or 0 }
+    local e = { identifier = ident, name = Bridge.GetName(target), role = role, commission = Sim.commission[role] or 0, wage = Sim.wages[role] or 0 }
     s.employees[ident] = e
     MySQL.insert.await(
-        'INSERT INTO gen_dealership_employees (dealership_id, identifier, name, role, commission) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), role = VALUES(role), commission = VALUES(commission)',
-        { d.id, ident, e.name, role, e.commission }
+        'INSERT INTO gen_dealership_employees (dealership_id, identifier, name, role, commission, wage) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), role = VALUES(role), commission = VALUES(commission), wage = VALUES(wage)',
+        { d.id, ident, e.name, role, e.commission, e.wage }
     )
     Biz.Log(d.id, 'staff', 0, ('Hired %s as %s'):format(e.name, ROLE_LABEL[role]), Bridge.GetName(src))
     Webhooks.Send('business', ('Staff hired · %s'):format(d.label), ('%s hired **%s** as %s'):format(Bridge.GetName(src), e.name, ROLE_LABEL[role]))
@@ -539,9 +617,12 @@ Actions.updateEmployee = { min = 'owner', run = function(src, d, s, p)
     local commission = clampInt(p.commission, 0, Sim.maxCommission)
     if not commission then return { ok = false, error = ('Commission must be 0-%d%%.'):format(Sim.maxCommission) } end
 
+    local wage = p.wage == nil and e.wage or clampInt(p.wage, 0, Sim.maxWage)
+    if not wage then return { ok = false, error = ('Wage must be 0-%s per hour.'):format(Utils.FormatMoney(Sim.maxWage)) } end
+
     local roleChanged = role ~= e.role
-    e.role, e.commission = role, commission
-    MySQL.update('UPDATE gen_dealership_employees SET role = ?, commission = ? WHERE dealership_id = ? AND identifier = ?', { role, commission, d.id, e.identifier })
+    e.role, e.commission, e.wage = role, commission, wage
+    MySQL.update('UPDATE gen_dealership_employees SET role = ?, commission = ?, wage = ? WHERE dealership_id = ? AND identifier = ?', { role, commission, wage, d.id, e.identifier })
     if roleChanged then
         Biz.Log(d.id, 'staff', 0, ('%s is now %s'):format(e.name, ROLE_LABEL[role]), Bridge.GetName(src))
         Biz.PushRolesTo({ e.identifier })
@@ -555,6 +636,7 @@ Actions.fire = { min = 'manager', run = function(src, d, s, p, myRole)
     if e.role == 'manager' and myRole ~= 'owner' then return { ok = false, error = 'Only the owner can let managers go.' } end
 
     s.employees[e.identifier] = nil
+    Staffing.ClockOutAt(d.id, { [e.identifier] = true })
     MySQL.query('DELETE FROM gen_dealership_employees WHERE dealership_id = ? AND identifier = ?', { d.id, e.identifier })
     Biz.Log(d.id, 'staff', 0, ('Let go of %s'):format(e.name), Bridge.GetName(src))
     Webhooks.Send('business', ('Staff let go · %s'):format(d.label), ('%s let go of **%s**'):format(Bridge.GetName(src), e.name), nil, 'warn')

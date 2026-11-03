@@ -8,6 +8,7 @@ const TX_LABEL = {
   sale: 'Sale', npc_sale: 'Walk-in sale', order: 'Stock order', commission: 'Commission', deposit: 'Deposit',
   withdraw: 'Withdrawal', upkeep: 'Upkeep', refund: 'Refund', delivery: 'Delivery', staff: 'Staff', price: 'Pricing', ownership: 'Ownership',
   freight: 'Freight', tradein: 'Trade-in', finance: 'Finance',
+  wage: 'Wages', bonus: 'Bonus', advert: 'Advertising', shift: 'Shift',
 };
 
 const B = { data: null, tab: 'overview', nearby: [], receivedAt: 0 };
@@ -16,8 +17,10 @@ const canB = (min) => !!(B.data && RANKS[B.data.role] >= RANKS[min]);
 const pct = (n) => `${Math.round(n)}%`;
 function fmtDuration(sec) {
   sec = Math.max(0, Math.round(sec));
-  const m = Math.floor(sec / 60);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
   const s = sec % 60;
+  if (h) return `${h}h ${String(m).padStart(2, '0')}m`;
   return m ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`;
 }
 function timeAgo(t) {
@@ -46,6 +49,9 @@ function setManageData(data) {
   B.data.orders = arr(data.orders);
   B.data.transactions = arr(data.transactions);
   B.data.used = arr(data.used);
+  B.data.shifts = arr(data.shifts);
+  B.data.leaderboard = arr(data.leaderboard);
+  B.data.campaigns = arr(data.campaigns);
   B.data.stats.daily = arr(data.stats.daily);
   B.receivedAt = Date.now();
   renderManage();
@@ -59,6 +65,7 @@ const B_TABS = [
   { id: 'inventory', label: 'Inventory', min: 'sales' },
   { id: 'desk', label: 'Sales desk', min: 'sales' },
   { id: 'staff', label: 'Staff', min: 'sales' },
+  { id: 'marketing', label: 'Marketing', min: 'manager' },
   { id: 'finance', label: 'Finance', min: 'manager' },
 ];
 
@@ -85,7 +92,7 @@ function renderManage() {
     .map((t) => `<button data-btab="${t.id}" class="${B.tab === t.id ? 'active' : ''}">${t.label}${t.id === 'desk' && d.customers ? ` <span class="badge warn">${d.customers}</span>` : ''}</button>`)
     .join('');
 
-  const panes = { overview: paneOverview, inventory: paneInventory, desk: paneDesk, staff: paneStaff, finance: paneFinance };
+  const panes = { overview: paneOverview, inventory: paneInventory, desk: paneDesk, staff: paneStaff, marketing: paneMarketing, finance: paneFinance };
   $('#b-pane').innerHTML = (panes[B.tab] || paneOverview)(d);
 }
 
@@ -107,6 +114,8 @@ function paneOverview(d) {
   const tile = (label, value, sub = '') => `<div class="tile"><div class="tile-label">${label}</div><div class="tile-value">${value}</div>${sub ? `<div class="tile-sub">${sub}</div>` : ''}</div>`;
 
   return `
+    ${statusStrip(d)}
+    ${marketBanner(d)}
     <div class="tiles">
       ${tile('Sales today', st.day.count, fmtMoney(st.day.revenue))}
       ${tile('Sales · 7 days', st.week.count, fmtMoney(st.week.revenue))}
@@ -136,7 +145,74 @@ function paneOverview(d) {
         ${txList(d.transactions.slice(0, 7))}
       </div>
     </div>
+    <div class="split">
+      <div class="card-box">
+        <h3 class="section-title flush">Top sellers · this week</h3>
+        ${leaderboard(d)}
+      </div>
+      <div class="card-box">
+        <h3 class="section-title flush">Dealership ranking</h3>
+        <div class="big-stat">${d.rank && d.rank.rank ? `#${d.rank.rank}<span class="muted small"> of ${d.rank.of}</span>` : '<span class="muted small">No sales this week yet</span>'}</div>
+        ${d.target.count > 0 ? `<div class="stat-head"><span>Your weekly target</span><span>${d.target.mine} / ${d.target.count} sales</span></div>
+          <div class="stat-bar"><span style="width:${Math.min(100, (d.target.mine / d.target.count) * 100)}%"></span></div>
+          <p class="hint">Hit it to earn a ${fmtMoney(d.target.bonus)} bonus (staff only, once a week).</p>` : '<p class="hint">No weekly sales target set.</p>'}
+      </div>
+    </div>
     <p class="hint">Staff within ${Math.round(d.settings.dutyRadius)} m of the catalogue point count as on duty. Walk-in customers only show up while someone is on duty, and more often the better your reputation. Fair prices raise reputation; ignored or insulted customers lower it.</p>`;
+}
+
+function statusStrip(d) {
+  const needClock = d.settings.requireClockIn;
+  const shiftFor = d.clockedIn && d.shiftStarted ? fmtDuration(d.now - d.shiftStarted) : '';
+  return `<div class="status-strip ${d.clockedIn ? 'on' : ''}">
+    <span class="dot ${d.clockedIn ? 'on' : ''}"></span>
+    <div class="grow">
+      <div class="row-title">${d.clockedIn ? `Clocked in · ${shiftFor}` : d.clockedElsewhere ? 'Clocked in at another dealership' : 'Clocked out'}</div>
+      <div class="muted small">${needClock ? 'Clock in to count as on duty, serve walk-in customers' : 'Being at the dealership counts as on duty'}${d.myWage ? ` and earn ${fmtMoney(d.myWage)}/h` : ''}.</div>
+    </div>
+    <button class="btn ${d.clockedIn ? '' : 'primary'}" data-clock ${d.clockedElsewhere ? 'disabled' : ''}>${d.clockedIn ? 'Clock out' : 'Clock in'}</button>
+  </div>`;
+}
+
+function marketBanner(d) {
+  const parts = [];
+  if (d.market) {
+    parts.push(`<div class="banner market"><b>📈 ${esc(d.market.label)}</b> <span class="muted">· ends in ${fmtDuration(d.market.endsIn)}</span>
+      <div class="small">${esc(d.market.description)}</div>
+      <div class="chips">${arr(d.market.effects).map((e) => `<span class="chip">${esc(e)}</span>`).join('')}</div></div>`);
+  }
+  if (d.ad) {
+    parts.push(`<div class="banner ad"><b>📣 ${esc(d.ad.label)} running</b> <span class="muted">· +${d.ad.boost}% customer traffic · ${fmtDuration(d.ad.endsIn)} left</span></div>`);
+  }
+  return parts.join('');
+}
+
+function leaderboard(d) {
+  if (!d.leaderboard.length) return '<div class="muted pad">No staff sales yet this week.</div>';
+  const max = Math.max(...d.leaderboard.map((r) => r.revenue), 1);
+  return `<div class="leader">${d.leaderboard.map((r, i) => `
+    <div class="leader-row ${r.me ? 'me' : ''}">
+      <span class="pos-n">${['🥇', '🥈', '🥉'][i] || `#${i + 1}`}</span>
+      <div class="grow"><div class="leader-head"><span>${esc(r.name)}${r.me ? ' <span class="tag">you</span>' : ''}</span><span>${fmtMoney(r.revenue)} · ${r.count}</span></div>
+      <div class="stat-bar"><span style="width:${(r.revenue / max) * 100}%"></span></div></div>
+    </div>`).join('')}</div>`;
+}
+
+/* ---------- marketing ---------- */
+function paneMarketing(d) {
+  return `
+    ${marketBanner(d) || '<div class="banner"><b>Market is calm</b> <span class="muted">· no special event right now</span></div>'}
+    <h3 class="section-title">Advertising campaigns</h3>
+    <p class="hint">Campaigns bring more walk-in customers while staff are on duty. Radio and billboard campaigns also broadcast your message to every player.</p>
+    <label class="field"><span>Announcement message <em>radio / billboard · optional</em></span>
+      <input class="input" id="ad-msg" maxlength="90" placeholder="Big deals today at ${esc(d.label)}! Come take a look."></label>
+    <div class="campaigns">${d.campaigns.map((c) => `
+      <div class="card-box campaign">
+        <div class="row-title">${esc(c.label)}</div>
+        <div class="big-price">${fmtMoney(c.cost)}</div>
+        <div class="muted small">+${c.boost}% customer traffic · ${fmtDuration(c.duration)}${c.announce ? ' · server-wide announcement' : ''}</div>
+        <button class="btn primary" data-advert="${esc(c.id)}" ${d.ad || d.balance < c.cost ? 'disabled' : ''}>${d.ad ? 'Campaign running' : d.balance < c.cost ? 'Not enough funds' : 'Launch'}</button>
+      </div>`).join('')}</div>`;
 }
 
 function txList(list) {
@@ -285,7 +361,7 @@ function paneStaff(d) {
   const rows = d.employees.map((e) => {
     const editable = owner && e.role !== 'owner';
     const canFire = e.role !== 'owner' && (owner || (mgr && e.role === 'sales'));
-    const status = e.onDuty ? '<span class="dot on"></span>On duty' : e.online ? '<span class="dot idle"></span>Online' : '<span class="dot"></span>Offline';
+    const status = e.onDuty ? '<span class="dot on"></span>On duty' : e.clockedIn ? '<span class="dot idle"></span>Clocked in (away)' : e.online ? '<span class="dot idle"></span>Online' : '<span class="dot"></span>Offline';
     return `<tr data-ident="${esc(e.identifier)}">
       <td><div class="row-title">${esc(e.name)}${e.me ? ' <span class="tag">you</span>' : ''}</div></td>
       <td>${editable ? `<select class="input sm" data-erole>
@@ -294,6 +370,9 @@ function paneStaff(d) {
       <td>${e.role === 'owner' ? '—' : editable
         ? `<input class="input sm qty" type="number" min="0" max="${d.settings.maxCommission}" data-ecomm value="${e.commission}"> %`
         : `${e.commission}%`}</td>
+      <td>${e.role === 'owner' ? '—' : editable
+        ? `<input class="input sm qty wide" type="number" min="0" max="${d.settings.maxWage}" data-ewage value="${e.wage}"> /h`
+        : `${fmtMoney(e.wage)}/h`}</td>
       <td class="nowrap small">${status}</td>
       <td>${canFire ? '<button class="btn ghost sm danger-text" data-fire>Let go</button>' : ''}</td>
     </tr>`;
@@ -303,7 +382,7 @@ function paneStaff(d) {
   return `
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>Name</th><th>Role</th><th>Commission</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Role</th><th>Commission</th><th>Wage</th><th>Status</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
@@ -318,7 +397,19 @@ function paneStaff(d) {
       </select>
       <button class="btn primary" data-hire>Hire</button>
     </div>
-    <p class="hint">Stand next to the player you want to hire (within 10 m). Up to ${d.settings.maxEmployees} employees. Managers can restock, set prices and hire salespeople. Commission is paid from business funds on every sale the employee closes.</p>` : ''}`;
+    <p class="hint">Stand next to the player you want to hire (within 10 m). Up to ${d.settings.maxEmployees} employees. Managers can restock, set prices and hire salespeople. Commission is paid from business funds on every sale the employee closes; wages are paid while they're clocked in at the dealership.</p>` : ''}
+    ${owner ? `<h3 class="section-title">Weekly sales target</h3>
+    <div class="add-row">
+      <label class="field grow"><span>Sales per week</span><input class="input" type="number" min="0" id="tgt-count" value="${d.target.count}"></label>
+      <label class="field grow"><span>Bonus</span><input class="input" type="number" min="0" id="tgt-bonus" value="${d.target.bonus}"></label>
+      <button class="btn primary" data-target style="align-self:flex-end">Save target</button>
+    </div>
+    <p class="hint">Every employee who closes this many sales in a week (Monday to Sunday) gets the bonus once, paid from business funds. Set 0 to disable.</p>` : ''}
+    <h3 class="section-title">Recent shifts</h3>
+    <div class="card-box">${d.shifts.length ? `<div class="tx-list">${d.shifts.map((sh) => `<div class="tx">
+        <div class="grow"><div>${esc(sh.name)}${sh.active ? ' <span class="chip good">on shift</span>' : ''}</div>
+        <div class="muted small">${timeAgo(sh.started)} · ${fmtDuration(sh.duration)}</div></div>
+        <div class="amount pos">${sh.earned ? fmtMoney(sh.earned) : ''}</div></div>`).join('')}</div>` : '<div class="muted pad">No shifts yet.</div>'}</div>`;
 }
 
 /* ---------- finance ---------- */
@@ -351,7 +442,17 @@ $('#b-pane').addEventListener('click', async (e) => {
   const d = B.data;
   if (!d) return;
 
-  if (t.closest('[data-order]')) {
+  if (t.closest('[data-clock]')) {
+    bizAction('clock');
+  } else if (t.closest('[data-target]')) {
+    bizAction('setTarget', { count: Number($('#tgt-count').value), bonus: Number($('#tgt-bonus').value) });
+  } else if (t.closest('[data-advert]')) {
+    const id = t.closest('[data-advert]').dataset.advert;
+    const c = d.campaigns.find((x) => x.id === id);
+    if (await askConfirm(`Launch ${c.label}?`, `${fmtMoney(c.cost)} from business funds for ${fmtDuration(c.duration)} of extra customer traffic.`, 'Launch')) {
+      bizAction('advertise', { id, message: $('#ad-msg').value });
+    }
+  } else if (t.closest('[data-order]')) {
     const row = t.closest('[data-vid]');
     const v = d.vehicles.find((x) => x.id === Number(row.dataset.vid));
     const qty = Math.max(1, Math.floor(Number(row.querySelector('[data-qty]').value) || 1));
@@ -389,11 +490,13 @@ $('#b-pane').addEventListener('click', async (e) => {
 
 $('#b-pane').addEventListener('change', (e) => {
   const row = e.target.closest('[data-ident]');
-  if (!row || !(e.target.matches('[data-erole]') || e.target.matches('[data-ecomm]'))) return;
+  if (!row) return;
+  if (!(e.target.matches('[data-erole]') || e.target.matches('[data-ecomm]') || e.target.matches('[data-ewage]'))) return;
   bizAction('updateEmployee', {
     identifier: row.dataset.ident,
     role: row.querySelector('[data-erole]').value,
     commission: Number(row.querySelector('[data-ecomm]').value),
+    wage: Number(row.querySelector('[data-ewage]').value),
   });
 });
 

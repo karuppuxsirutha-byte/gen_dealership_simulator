@@ -111,10 +111,20 @@ local function spawnCustomer(d, s)
         if v.stock > 0 then pool[#pool + 1] = v end
     end
     if #pool == 0 then return false end
-    local v = pick(pool)
+    -- weight the wanted model by current market demand for its category
+    local total, weights = 0, {}
+    for i, cand in ipairs(pool) do
+        weights[i] = Market.DemandMultiplier(cand.category)
+        total = total + weights[i]
+    end
+    local roll, v = math.random() * total, pool[#pool]
+    for i, cand in ipairs(pool) do
+        roll = roll - weights[i]
+        if roll <= 0 then v = cand break end
+    end
 
     -- Reputation nudges budgets: 0 rep = 5% below list, 100 rep = 5% above
-    local repFactor = 0.95 + s.reputation / 1000
+    local repFactor = (0.95 + s.reputation / 1000) * Market.BudgetMultiplier(v.category)
     local budget = round100(v.price * rand(0.88, 1.12) * repFactor)
     local offer = round100(budget * rand(0.82, 0.94))
 
@@ -141,7 +151,7 @@ end
 local function staffOnDuty(d, online)
     local n = 0
     for ident, src in pairs(online) do
-        if Biz.RoleOf(d.id, ident) and IsNear(src, d.shop, Sim.dutyRadius) then n = n + 1 end
+        if Biz.RoleOf(d.id, ident) and IsStaffOnDuty(src, d) then n = n + 1 end
     end
     return n
 end
@@ -169,8 +179,9 @@ local function tick()
                         if c.dealershipId == d.id and not c.servedBy then Customers[id] = nil changed = true end
                     end
                 else
-                    local max = math.min(Cfg.maxActive, 1 + math.floor(s.reputation / 35))
-                    local chance = Cfg.baseChance * (0.5 + s.reputation / 100)
+                    local adBoost = Market.AdBoost(d.id)
+                    local max = math.min(Cfg.maxActive, 1 + math.floor(s.reputation / 35)) + (adBoost > 0 and 1 or 0)
+                    local chance = Cfg.baseChance * (0.5 + s.reputation / 100) * Market.SpawnFactor() * (1 + adBoost)
                     if CountCustomers(d.id) < max and math.random() < chance then
                         if spawnCustomer(d, s) then changed = true end
                     end
@@ -258,6 +269,7 @@ local function closeDeal(src, c, d, v, price)
     local commission = Biz.PayCommission(d.id, src, price, v.label)
     Biz.AddReputation(d.id, price <= c.listPrice and 2 or 1)
     DB.LogSale(d.name, 'npc:' .. c.name, v.model, '-', price, 'bank', Bridge.GetIdentifier(src) or '', 'npc')
+    OnStaffSale(d, Bridge.GetIdentifier(src) or '')
     Webhooks.Send('sales', ('Walk-in sale · %s'):format(d.label), nil, {
         Webhooks.Field('Vehicle', v.label),
         Webhooks.Field('Price', Utils.FormatMoney(price)),

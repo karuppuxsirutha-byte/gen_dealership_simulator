@@ -79,6 +79,13 @@ Config.Simulation = {
     dutyRadius = 60.0,           -- staff within this distance of the catalogue point are "on duty"
     offerTimeout = 60,           -- seconds a player has to answer a staff offer
 
+    -- Shifts & wages
+    requireClockIn = true,       -- staff must clock in (management panel) to count as on duty
+    wages = { manager = 400, sales = 250 },  -- default hourly wage, paid from business funds
+    maxWage = 2000,
+    wagePayInterval = 600,       -- seconds between wage payouts (and on clock-out)
+    autoClockOut = 900,          -- clock out staff who leave the dealership for this long
+
     -- Running costs (0 to disable), taken from the business account
     upkeep = 0,
     upkeepInterval = 3600,
@@ -182,6 +189,35 @@ Config.UsedLot = {
     enabled = true,
     markup = 1.3,              -- listing price = trade-in value * markup
     maxPerDealership = 25,
+}
+
+-- ===========================================================================
+-- Market events: random demand / cost swings (admins: /dealermarket <id|random|clear>)
+-- ===========================================================================
+Config.Market = {
+    enabled = true,
+    interval = 5400,       -- seconds between rolls for a new event
+    chance = 0.7,          -- chance a roll starts an event
+    duration = 3600,       -- default event length (seconds)
+    events = {
+        { id = 'suv_craze',       label = 'SUV craze',          description = 'Families are upgrading. Everyone wants an SUV.', category = 'suvs', demand = 1.8 },
+        { id = 'track_day',       label = 'Track day hype',     description = 'A big race weekend has people buying sports cars.', category = 'sports', demand = 1.6, budget = 1.05 },
+        { id = 'bike_season',     label = 'Bike season',        description = 'Sunny weather brings out the riders.', category = 'motorcycles', demand = 1.7, cost = 1.1 },
+        { id = 'super_clearance', label = 'Supercar clearance', description = 'Importers are clearing old supercar stock.', category = 'super', cost = 0.85 },
+        { id = 'fuel_spike',      label = 'Fuel price spike',   description = 'Gas is expensive. Nobody wants a muscle car.', category = 'muscle', demand = 0.6 },
+        { id = 'shortage',        label = 'Supplier shortage',  description = 'A chip shortage pushes wholesale prices up.', cost = 1.25, demand = 0.9 },
+        { id = 'boom',            label = 'Economic boom',      description = 'Wallets are full and spirits are high.', demand = 1.3, budget = 1.08 },
+        { id = 'recession',       label = 'Recession',          description = 'Customers are cautious and bargain hard.', demand = 0.75, budget = 0.94 },
+    },
+}
+
+-- Advertising campaigns owners/managers can buy (boost = extra AI customer traffic)
+Config.Advertising = {
+    campaigns = {
+        { id = 'flyers',    label = 'Flyers',     cost = 2500,  boost = 25,  duration = 1800, announce = false },
+        { id = 'radio',     label = 'Radio spot', cost = 10000, boost = 60,  duration = 3600, announce = true },
+        { id = 'billboard', label = 'Billboard',  cost = 30000, boost = 120, duration = 7200, announce = true },
+    },
 }
 
 -- UI look & feel

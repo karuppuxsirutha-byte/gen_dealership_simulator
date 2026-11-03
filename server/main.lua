@@ -409,11 +409,11 @@ function ProcessSale(buyer, d, v, method, price, opts)
             ('%s%s sold to %s%s'):format(used and 'Pre-owned ' or '', v.label, Bridge.GetName(buyer), plan and ' (financed)' or ''),
             opts.sellerName or 'Self-service')
         if opts.seller then commission = Biz.PayCommission(d.id, opts.seller, price, v.label) end
-        if OnStaffSale and opts.sellerIdentifier and opts.sellerIdentifier ~= '' then OnStaffSale(d, opts.sellerIdentifier) end
     end
     if plan then Finance.Create(buyer, d, v, plate, plan) end
 
     DB.LogSale(d.name, Bridge.GetIdentifier(buyer), v.model, plate, price, plan and 'finance' or method, opts.sellerIdentifier, opts.kind or 'shop')
+    if opts.sellerIdentifier and opts.sellerIdentifier ~= '' then OnStaffSale(d, opts.sellerIdentifier) end
     Webhooks.Send('sales', ('Vehicle sold · %s'):format(d.label), nil, {
         Webhooks.Field('Vehicle', ('%s%s (`%s`)'):format(used and 'Pre-owned ' or '', v.label, v.model)),
         Webhooks.Field('Price', Utils.FormatMoney(price)),

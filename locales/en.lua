@@ -60,4 +60,20 @@ Locales.en = {
     finance_none       = 'You have no active finance contracts.',
     finance_not_found  = 'Contract not found.',
     finance_payment_ok = 'Paid %s.',
+
+    -- staff, market & ads
+    clocked_in         = 'Clocked in at %s. Stay at the dealership to earn wages.',
+    clocked_out        = 'Clocked out. Wages paid.',
+    clocked_out_auto   = 'You were clocked out.',
+    clocked_out_away   = 'You left the dealership, so you were clocked out.',
+    already_clocked_in = 'You are already clocked in somewhere.',
+    clock_in_far       = 'You must be at the dealership to clock in.',
+    wage_unpaid        = 'The dealership cannot pay your wages right now.',
+    bonus_paid         = 'Weekly target hit! Bonus of %s for %d sales.',
+    bonus_unpaid       = '%s hit the weekly target, but the business could not afford the bonus.',
+    market_started     = 'Market news: %s (%s)',
+    market_ended       = 'Market news: %s is over.',
+    ad_running         = 'A campaign is already running.',
+    ad_started         = '%s campaign is live!',
+    ad_default         = 'Big deals today at %s! Come take a look.',
 }

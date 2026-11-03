@@ -211,3 +211,11 @@ AddEventHandler('onResourceStop', function(res)
     if res ~= GetCurrentResourceName() then return end
     for id in pairs(Peds) do removePed(id, false) end
 end)
+
+-- Radio / billboard adverts bought by dealerships
+RegisterNetEvent('gen_dealership:advert', function(dealership, text)
+    BeginTextCommandThefeedPost('STRING')
+    AddTextComponentSubstringPlayerName(text)
+    EndTextCommandThefeedPostMessagetext('CHAR_CARSITE', 'CHAR_CARSITE', false, 1, dealership, 'Advertisement')
+    EndTextCommandThefeedPostTicker(false, true)
+end)
