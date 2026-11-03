@@ -28,6 +28,7 @@ local function removePed(id, walkAway)
     local ped = Peds[id]
     Peds[id] = nil
     if not ped or not DoesEntityExist(ped) then return end
+    if RemoveEntityTarget then RemoveEntityTarget(ped) end
     if walkAway then
         ClearPedTasks(ped)
         TaskWanderStandard(ped, 10.0, 10)
@@ -69,6 +70,7 @@ local function spawnPed(c)
     TaskStartScenarioInPlace(ped, SCENARIOS[(c.id % #SCENARIOS) + 1], 0, true)
     SetModelAsNoLongerNeeded(hash)
     Peds[c.id] = ped
+    if AddCustomerTarget then AddCustomerTarget(ped, c.id, c.dealershipId) end
 end
 
 CreateThread(function()
@@ -86,7 +88,7 @@ CreateThread(function()
     end
 end)
 
-local function engage(id)
+function EngageCustomer(id)
     local res = TriggerCallback('customer:engage', id)
     if not res or not res.ok then
         Bridge.Notify(res and res.error or 'No response from server.', 'error')
@@ -115,9 +117,9 @@ CreateThread(function()
                     if dist < 10.0 then
                         sleep = 0
                         DrawText3D(ppos + vector3(0.0, 0.0, 1.1), ('~b~%s~s~~n~Interested in %s'):format(c.name, c.label))
-                        if dist < 2.0 then
+                        if dist < 2.0 and not UseTarget then
                             ShowHelp(T('talk_customer'))
-                            if IsControlJustReleased(0, Config.InteractKey) then engage(id) end
+                            if IsControlJustReleased(0, Config.InteractKey) then EngageCustomer(id) end
                         end
                     end
                 end

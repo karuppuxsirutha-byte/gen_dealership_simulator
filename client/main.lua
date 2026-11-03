@@ -15,11 +15,12 @@ State = {
     offerOpen = false,
     logisticsOpen = false,
     financeOpen = false,
+    adminOpen = false,
 }
 
 function UIBusy()
     return State.shopOpen or State.creatorOpen or State.placing or State.testDrive ~= nil
-        or State.manageOpen or State.negotiating or State.offerOpen or State.logisticsOpen or State.financeOpen
+        or State.manageOpen or State.negotiating or State.offerOpen or State.logisticsOpen or State.financeOpen or State.adminOpen
 end
 
 local Blips = {}
@@ -129,7 +130,10 @@ local function deleteDisplays(id)
     local list = Displays[id]
     if not list then return end
     for _, e in pairs(list) do
-        if DoesEntityExist(e) then DeleteEntity(e) end
+        if DoesEntityExist(e) then
+            if RemoveEntityTarget then RemoveEntityTarget(e) end
+            DeleteEntity(e)
+        end
     end
     Displays[id] = nil
 end
@@ -163,6 +167,10 @@ local function spawnDisplays(d)
             SetVehicleEngineOn(veh, false, true, true)
             SetModelAsNoLongerNeeded(hash)
             list[i] = veh
+            if AddDisplayTarget then
+                local info = findVehicleByModel(d, spot.model)
+                if info then AddDisplayTarget(veh, d, info.id, info.label) end
+            end
         end
     end
 end
@@ -201,6 +209,7 @@ local function applySync(list)
     deleteAllDisplays()
     State.dealerships = list or {}
     refreshBlips()
+    if RefreshTargets then RefreshTargets() end
 
     if State.shopOpen and State.shopId then
         local d = findDealership(State.shopId)
@@ -241,6 +250,7 @@ function CloseUI()
     State.offerOpen = false
     State.logisticsOpen = false
     State.financeOpen = false
+    State.adminOpen = false
 end
 
 --- Catalogue + pre-owned listings as one list for the shop UI
@@ -569,7 +579,7 @@ CreateThread(function()
                             m.scale, m.scale, m.scale, m.color[1], m.color[2], m.color[3], m.color[4],
                             true, true, 2, false, nil, nil, false)
 
-                        if dist < Config.InteractDistance then
+                        if dist < Config.InteractDistance and not UseTarget then
                             prompted = true
                             local role = State.roles[tostring(d.id)]
                             ShowHelp(role and T('open_shop_manage', d.label) or T('open_shop', d.label))
@@ -606,7 +616,7 @@ CreateThread(function()
 
                     -- Test drive straight from a showroom car
                     if TD.enabled and TD.fromDisplays and access and closest and not prompted
-                        and closestDist < (TD.displayInteractDistance or 3.5) then
+                        and closestDist < (TD.displayInteractDistance or 3.5) and not UseTarget then
                         prompted = true
                         ShowHelp(T('testdrive_display', closestInfo.label))
                         if IsControlJustReleased(0, Config.InteractKey) then
@@ -639,4 +649,7 @@ end)
 
 -- Expose a few helpers for creator.lua
 FindDealership = findDealership
+CanAccessDealership = canAccess
+OpenShopFor = openShop
+StartTestDriveFor = startTestDrive
 FindVehicleById = findVehicleById

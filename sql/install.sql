@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS `gen_dealerships` (
   `spawn` LONGTEXT NULL,
   `testdrive` LONGTEXT NULL,
   `delivery` LONGTEXT NULL,
+  `preview` LONGTEXT NULL,
   `displays` LONGTEXT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -63,6 +64,11 @@ CREATE TABLE IF NOT EXISTS `gen_dealership_business` (
   `owner_since` INT NOT NULL DEFAULT 0,
   `balance` BIGINT NOT NULL DEFAULT 0,
   `reputation` INT NOT NULL DEFAULT 50,
+  `target_count` INT NOT NULL DEFAULT 0,
+  `target_bonus` INT NOT NULL DEFAULT 0,
+  `ad_label` VARCHAR(64) NOT NULL DEFAULT '',
+  `ad_boost` INT NOT NULL DEFAULT 0,
+  `ad_until` INT NOT NULL DEFAULT 0,
   PRIMARY KEY (`dealership_id`),
   CONSTRAINT `fk_gen_dealership_business` FOREIGN KEY (`dealership_id`) REFERENCES `gen_dealerships` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -74,6 +80,7 @@ CREATE TABLE IF NOT EXISTS `gen_dealership_employees` (
   `name` VARCHAR(100) NOT NULL,
   `role` VARCHAR(16) NOT NULL DEFAULT 'sales',
   `commission` INT NOT NULL DEFAULT 10,
+  `wage` INT NOT NULL DEFAULT -1,
   `hired_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `dealership_identifier` (`dealership_id`, `identifier`),
@@ -112,6 +119,80 @@ CREATE TABLE IF NOT EXISTS `gen_dealership_shipments` (
   PRIMARY KEY (`id`),
   KEY `status` (`status`),
   CONSTRAINT `fk_gen_dealership_shipments` FOREIGN KEY (`dealership_id`) REFERENCES `gen_dealerships` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `gen_dealership_used` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `dealership_id` INT NOT NULL,
+  `model` VARCHAR(32) NOT NULL,
+  `label` VARCHAR(100) NOT NULL,
+  `category` VARCHAR(64) NOT NULL DEFAULT 'other',
+  `price` INT NOT NULL,
+  `value` INT NOT NULL DEFAULT 0,
+  `condition` INT NOT NULL DEFAULT 100,
+  `source` VARCHAR(16) NOT NULL DEFAULT 'tradein',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `dealership_id` (`dealership_id`),
+  CONSTRAINT `fk_gen_dealership_used` FOREIGN KEY (`dealership_id`) REFERENCES `gen_dealerships` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `gen_dealership_finance` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `identifier` VARCHAR(100) NOT NULL,
+  `owner_name` VARCHAR(100) NOT NULL DEFAULT '',
+  `dealership_id` INT NULL,
+  `dealership` VARCHAR(100) NOT NULL DEFAULT '',
+  `plate` VARCHAR(8) NOT NULL,
+  `model` VARCHAR(32) NOT NULL,
+  `label` VARCHAR(100) NOT NULL,
+  `total` INT NOT NULL,
+  `remaining` INT NOT NULL,
+  `payment` INT NOT NULL,
+  `payments_left` INT NOT NULL,
+  `next_due` INT NOT NULL,
+  `missed` INT NOT NULL DEFAULT 0,
+  `status` VARCHAR(16) NOT NULL DEFAULT 'active',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `identifier` (`identifier`),
+  KEY `status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `gen_dealership_shifts` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `dealership_id` INT NOT NULL,
+  `identifier` VARCHAR(100) NOT NULL,
+  `name` VARCHAR(100) NOT NULL,
+  `started` INT NOT NULL,
+  `ended` INT NOT NULL DEFAULT 0,
+  `earned` INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  KEY `dealership_id` (`dealership_id`),
+  CONSTRAINT `fk_gen_dealership_shifts` FOREIGN KEY (`dealership_id`) REFERENCES `gen_dealerships` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `gen_dealership_bonuses` (
+  `dealership_id` INT NOT NULL,
+  `identifier` VARCHAR(100) NOT NULL,
+  `week` INT NOT NULL,
+  PRIMARY KEY (`dealership_id`, `identifier`, `week`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `gen_logistics_company` (
+  `id` INT NOT NULL,
+  `owner` VARCHAR(100) NOT NULL DEFAULT '',
+  `owner_name` VARCHAR(100) NOT NULL DEFAULT '',
+  `balance` BIGINT NOT NULL DEFAULT 0,
+  `cut` INT NOT NULL DEFAULT 15,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `gen_logistics_drivers` (
+  `identifier` VARCHAR(100) NOT NULL,
+  `name` VARCHAR(100) NOT NULL,
+  `hired_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`identifier`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `gen_dealership_transactions` (

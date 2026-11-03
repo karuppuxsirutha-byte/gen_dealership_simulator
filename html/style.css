@@ -522,3 +522,4 @@ kbd { display: inline-block; min-width: 18px; padding: 0 4px; margin-right: 2px;
 .row-card.carrier { border-color: rgba(245, 185, 66, .35); }
 .company-sale { display: flex; align-items: center; gap: 16px; }
 .inline .input { min-width: 0; }
+.tile-value.small-value { font-size: 18px; }

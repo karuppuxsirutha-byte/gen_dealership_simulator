@@ -267,6 +267,12 @@ Config.Advertising = {
     },
 }
 
+-- Registration papers given on purchase (needs the item in ox_inventory / qb-inventory)
+Config.Papers = { enabled = true, item = 'vehicle_registration', warnMissing = true }
+
+-- ox_target third-eye options (used automatically when ox_target is running)
+Config.Target = { enabled = true }
+
 -- UI look & feel
 Config.UI = {
     accent = '#3d8bff',   -- any #rrggbb colour

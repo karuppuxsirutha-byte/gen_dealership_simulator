@@ -193,6 +193,31 @@ RegisterNUICallback('creatorDelete', function(data, cb)
     cb(TriggerCallback('creator:delete', data.id) or { ok = false, error = 'No response from server.' })
 end)
 
+-- ---------------------------------------------------------------------------
+-- Admin dashboard (/dealeradmin)
+-- ---------------------------------------------------------------------------
+
+RegisterNetEvent('gen_dealership:admin:open', function(data)
+    if UIBusy() then return end
+    State.adminOpen = true
+    SetNuiFocus(true, true)
+    SendNUIMessage({ action = 'openAdmin', data = data, currency = Config.Currency })
+end)
+
+RegisterNUICallback('adminRefresh', function(_, cb)
+    cb(TriggerCallback('admin:dashboard') or { ok = false, error = 'No response from server.' })
+end)
+
+RegisterNUICallback('adminMarket', function(data, cb)
+    cb(TriggerCallback('admin:market', data.id) or { ok = false, error = 'No response from server.' })
+end)
+
+RegisterNUICallback('adminCreator', function(_, cb)
+    cb('ok')
+    CloseUI()
+    ExecuteCommand(Config.CreatorCommand)
+end)
+
 RegisterNUICallback('creatorResetOwner', function(data, cb)
     cb(TriggerCallback('creator:resetOwner', data.id) or { ok = false, error = 'No response from server.' })
 end)

@@ -265,7 +265,7 @@ CreateThread(function()
                 sleep = 0
                 DrawMarker(39, b.x, b.y, b.z + 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.8, 0.8, 0.8,
                     245, 185, 66, 190, true, true, 2, false, nil, nil, false)
-                if dist < Config.InteractDistance then
+                if dist < Config.InteractDistance and not UseTarget then
                     ShowHelp(T('open_logistics'))
                     if IsControlJustReleased(0, Config.InteractKey) then openBoard() end
                 end
