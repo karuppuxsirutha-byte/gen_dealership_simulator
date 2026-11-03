@@ -65,17 +65,6 @@ function DrawText3D(coords, text)
     EndTextCommandDisplayText(x, y)
 end
 
-local function drawScreenText(text)
-    SetTextScale(0.45, 0.45)
-    SetTextFont(4)
-    SetTextColour(255, 255, 255, 230)
-    SetTextOutline()
-    SetTextCentre(true)
-    BeginTextCommandDisplayText('STRING')
-    AddTextComponentSubstringPlayerName(text)
-    EndTextCommandDisplayText(0.5, 0.90)
-end
-
 local function canAccess(d)
     if not d.job then return true end
     return Bridge.GetJob() == d.job
@@ -344,7 +333,13 @@ RegisterNUICallback('shopBuyBusiness', function(data, cb)
     end
 end)
 
-local function endTestDrive()
+-- ---------------------------------------------------------------------------
+-- Test drives
+-- ---------------------------------------------------------------------------
+
+local TD = Config.TestDrive
+
+local function endTestDrive(reason)
     local td = State.testDrive
     if not td then return end
     State.testDrive = nil
@@ -358,67 +353,114 @@ local function endTestDrive()
         SetEntityAsMissionEntity(td.vehicle, true, true)
         DeleteVehicle(td.vehicle)
     end
-    Wait(200)
+    TriggerServerEvent('gen_dealership:testdriveEnd')
+    Wait(300) -- give the server a moment to move us back to the public instance
     DoScreenFadeIn(400)
 
-    TriggerServerEvent('gen_dealership:testdriveEnd')
-    Bridge.Notify(T('testdrive_over'), 'primary')
+    Bridge.Notify(reason or T('testdrive_over'), 'primary')
 end
 
-RegisterNUICallback('shopTestDrive', function(data, cb)
-    local d = State.shopId and findDealership(State.shopId)
-    if not d then return cb({ ok = false, error = T('vehicle_not_found') }) end
+local function testDriveHud(remaining, km, maxKm, warn)
+    local text = T('testdrive_hud', ('%d:%02d'):format(remaining // 60, remaining % 60))
+    if maxKm then
+        text = text .. ('  ·  %s%.1f / %.1f km~s~'):format(warn and '~r~' or '', km, maxKm)
+    end
+    SetTextScale(0.42, 0.42)
+    SetTextFont(4)
+    SetTextColour(255, 255, 255, 230)
+    SetTextOutline()
+    SetTextCentre(true)
+    BeginTextCommandDisplayText('STRING')
+    AddTextComponentSubstringPlayerName(text .. '~n~' .. T('testdrive_end_key'))
+    EndTextCommandDisplayText(0.5, 0.885)
+end
+
+--- Starts a test drive of one catalogue vehicle. Returns ok, error.
+local function startTestDrive(d, vehicleId)
+    if not TD.enabled then return false, T('testdrive_disabled') end
+    if State.testDrive then return false, T('testdrive_active') end
     local point = d.testdrive or d.spawn
-    if not point then return cb({ ok = false, error = T('testdrive_disabled') }) end
-    if SpotBlocked(point) then return cb({ ok = false, error = T('spawn_blocked') }) end
+    if not point then return false, T('testdrive_disabled') end
+    if SpotBlocked(point) then return false, T('spawn_blocked') end
 
-    local res = TriggerCallback('shop:testdrive', d.id, data.vehicleId)
-    if not res then return cb({ ok = false, error = 'No response from server.' }) end
-    cb(res)
-    if not res.ok then return end
+    local res = TriggerCallback('shop:testdrive', d.id, vehicleId)
+    if not res then return false, 'No response from server.' end
+    if not res.ok then return false, res.error end
 
-    CloseUI()
+    if State.shopOpen then CloseUI() end
     local ped = PlayerPedId()
     local returnPos, returnHeading = GetEntityCoords(ped), GetEntityHeading(ped)
 
     DoScreenFadeOut(300)
     Wait(350)
+    if res.instanced then Wait(250) end -- routing bucket switch
     local veh = SpawnPlayerVehicle(res.model, point, res.plate)
     DoScreenFadeIn(400)
     if not veh then
         TriggerServerEvent('gen_dealership:testdriveEnd')
-        return
+        return false, T('vehicle_not_found')
     end
+    TriggerServerEvent('gen_dealership:testdriveSpawned', NetworkGetNetworkIdFromEntity(veh))
 
+    local origin = vector3(point.x + 0.0, point.y + 0.0, point.z + 0.0)
     State.testDrive = {
         vehicle = veh,
         endsAt = GetGameTimer() + res.duration * 1000,
         returnPos = returnPos,
         returnHeading = returnHeading,
     }
+    Bridge.Notify(T('testdrive_started', res.label, res.duration), 'primary')
 
     CreateThread(function()
         local outSince
+        local maxDist = (TD.maxDistance or 0) > 0 and TD.maxDistance or nil
         while State.testDrive and State.testDrive.vehicle == veh do
-            local remaining = math.ceil((State.testDrive.endsAt - GetGameTimer()) / 1000)
-            drawScreenText(T('testdrive_left', math.max(remaining, 0)))
+            local myPed = PlayerPedId()
+            local remaining = math.max(0, math.ceil((State.testDrive.endsAt - GetGameTimer()) / 1000))
+            local dist = #(GetEntityCoords(myPed) - origin)
+            local warn = maxDist and dist > maxDist * 0.8
+            testDriveHud(remaining, dist / 1000.0, maxDist and maxDist / 1000.0, warn)
 
-            if GetVehiclePedIsIn(PlayerPedId(), false) ~= veh then
+            if GetVehiclePedIsIn(myPed, false) ~= veh then
                 outSince = outSince or GetGameTimer()
             else
                 outSince = nil
             end
 
-            if remaining <= 0
+            DisableControlAction(0, 73, true)
+            if IsDisabledControlJustReleased(0, 73) then
+                endTestDrive(T('testdrive_ended_early'))
+                break
+            elseif maxDist and dist > maxDist then
+                endTestDrive(T('testdrive_too_far'))
+                break
+            elseif remaining <= 0
                 or (outSince and GetGameTimer() - outSince > 5000)
                 or not DoesEntityExist(veh)
-                or IsEntityDead(PlayerPedId()) then
+                or IsEntityDead(myPed) then
                 endTestDrive()
                 break
             end
             Wait(0)
         end
     end)
+    return true
+end
+
+RegisterNUICallback('shopTestDrive', function(data, cb)
+    local d = State.shopId and findDealership(State.shopId)
+    if not d then return cb({ ok = false, error = T('vehicle_not_found') }) end
+    -- answer the UI first: startTestDrive closes it and yields for the fade
+    local point = d.testdrive or d.spawn
+    if not point then return cb({ ok = false, error = T('testdrive_disabled') }) end
+    if SpotBlocked(point) then return cb({ ok = false, error = T('spawn_blocked') }) end
+    local ok, err = startTestDrive(d, data.vehicleId)
+    cb({ ok = ok, error = err })
+end)
+
+-- Server ended the test drive (timeout / cleanup)
+RegisterNetEvent('gen_dealership:testdriveForceEnd', function(reason)
+    if State.testDrive then endTestDrive(reason) end
 end)
 
 -- ---------------------------------------------------------------------------
@@ -431,9 +473,11 @@ CreateThread(function()
         local sleep = 750
         if not UIBusy() then
             local pos = GetEntityCoords(PlayerPedId())
+            local prompted = false
 
             for _, d in ipairs(State.dealerships) do
-                if d.shop and canAccess(d) then
+                local access = canAccess(d)
+                if d.shop and access then
                     local point = ToVec3(d.shop)
                     local dist = #(pos - point)
                     if dist < Config.MarkerDrawDistance then
@@ -443,6 +487,7 @@ CreateThread(function()
                             true, true, 2, false, nil, nil, false)
 
                         if dist < Config.InteractDistance then
+                            prompted = true
                             local role = State.roles[tostring(d.id)]
                             ShowHelp(role and T('open_shop_manage', d.label) or T('open_shop', d.label))
                             if IsControlJustReleased(0, Config.InteractKey) then
@@ -456,18 +501,34 @@ CreateThread(function()
 
                 local list = Displays[d.id]
                 if list then
+                    local closest, closestDist, closestInfo
                     for i, veh in pairs(list) do
                         if DoesEntityExist(veh) then
                             local vpos = GetEntityCoords(veh)
-                            if #(pos - vpos) < Config.DisplayLabelDistance then
+                            local vdist = #(pos - vpos)
+                            if vdist < Config.DisplayLabelDistance then
                                 sleep = 0
                                 local spot = d.displays[i]
                                 local info = spot and findVehicleByModel(d, spot.model)
                                 if info then
                                     DrawText3D(vpos + vector3(0.0, 0.0, 1.3),
                                         ('%s~n~~g~%s'):format(info.label, Utils.FormatMoney(info.price)))
+                                    if not closestDist or vdist < closestDist then
+                                        closest, closestDist, closestInfo = veh, vdist, info
+                                    end
                                 end
                             end
+                        end
+                    end
+
+                    -- Test drive straight from a showroom car
+                    if TD.enabled and TD.fromDisplays and access and closest and not prompted
+                        and closestDist < (TD.displayInteractDistance or 3.5) then
+                        prompted = true
+                        ShowHelp(T('testdrive_display', closestInfo.label))
+                        if IsControlJustReleased(0, Config.InteractKey) then
+                            local ok, err = startTestDrive(d, closestInfo.id)
+                            if not ok and err then Bridge.Notify(err, 'error') end
                         end
                     end
                 end

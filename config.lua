@@ -33,9 +33,14 @@ Config.PurchaseDistance = 10.0               -- max distance (server-checked) fr
 -- Test drives
 Config.TestDrive = {
     enabled = true,
-    duration = 60,       -- seconds
-    cooldown = 120,      -- seconds between test drives per player
+    duration = 60,             -- seconds
+    cooldown = 120,            -- seconds between test drives per player
     platePrefix = 'TEST',
+    maxDistance = 1500.0,      -- metres from the test drive spawn before it ends (0 = unlimited)
+    fromDisplays = true,       -- press E next to a showroom car to test drive it
+    displayInteractDistance = 3.5,
+    privateInstance = false,   -- drive in a private routing bucket (no other players / traffic collisions)
+    bucketBase = 7000,         -- private bucket = bucketBase + player id
 }
 
 -- Standalone mode has no economy: should purchases be free?
@@ -179,7 +184,12 @@ Config.Text = {
     testdrive_disabled = 'Test drives are disabled here.',
     testdrive_active   = 'You are already on a test drive.',
     testdrive_cooldown = 'Wait %s seconds before another test drive.',
-    testdrive_left     = 'Test drive: %ss left',
+    testdrive_hud      = 'Test drive · %s left',
+    testdrive_end_key  = '~INPUT_VEH_DUCK~ End test drive',
+    testdrive_started  = 'Test driving the %s for %s seconds. Have fun!',
+    testdrive_display  = '~INPUT_CONTEXT~ Test drive %s',
+    testdrive_ended_early = 'Test drive ended. Come back any time!',
+    testdrive_too_far  = 'You drove too far, so the test drive was ended.',
     testdrive_over     = 'Your test drive is over.',
     busy               = 'Please wait…',
     placement_help     = '~INPUT_CONTEXT~ Confirm~n~~INPUT_DETONATE~ Use my position~n~~INPUT_WEAPON_WHEEL_NEXT~ / ~INPUT_CELLPHONE_LEFT~ Rotate (~INPUT_SPRINT~ faster)~n~~INPUT_CELLPHONE_CANCEL~ Cancel',

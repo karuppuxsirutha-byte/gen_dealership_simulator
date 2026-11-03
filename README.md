@@ -22,7 +22,11 @@ Works with **Qbox**, **QBCore**, **ESX** and **standalone** (detected automatica
 **Player shop**
 - Catalogue grid with category filter, search, stock badges and vehicle images
 - Pay with bank or cash (configurable)
-- Timed test drives with a countdown. They end automatically if the player leaves the vehicle, and the server enforces a cooldown
+- **Test drives:** start one from the catalogue, or walk up to any showroom car and press **E**.
+  - The car spawns at the test-drive point with a countdown and a range readout, and turns red as you near the limit.
+  - **X** ends the drive early. Driving too far, leaving the car, or running out of time sends you back automatically.
+  - The server enforces a cooldown and cleans up abandoned test cars (crash or disconnect).
+  - Optional private instance (routing bucket) so test drivers can't interfere with anyone.
 - Purchased vehicles are written to the framework's own table (`player_vehicles` / `owned_vehicles`), delivered at the spawn point, and come with keys and fuel
 
 **Security**
@@ -97,6 +101,8 @@ Admins can revoke ownership from the creator. With `Config.Simulation.adminFullA
 ## Configuration
 
 Everything lives in `config.lua`: command name, ACE, interaction key and distances, plate format, payment methods, test drive duration and cooldown, limits, categories and all player-facing text.
+
+`Config.TestDrive` sets the duration, cooldown, max range, whether showroom cars can be test driven, and the private instance.
 
 `Config.Simulation` holds the business settings:
 - Markup range, delivery time and default commissions

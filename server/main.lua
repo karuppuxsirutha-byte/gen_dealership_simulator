@@ -383,39 +383,96 @@ RegisterCallback('shop:buy', function(src, dealershipId, vehicleId, method)
     return ProcessSale(src, d, v, method, v.price, { kind = 'shop' })
 end)
 
+-- ---------------------------------------------------------------------------
+-- Test drives
+-- ---------------------------------------------------------------------------
+
+local TD = Config.TestDrive
+
+--- Near the catalogue point or any showroom car of this dealership
+local function nearDealership(src, d)
+    if IsNear(src, d.shop, Config.PurchaseDistance) then return true end
+    for _, spot in ipairs(d.displays or {}) do
+        if IsNear(src, spot, (TD.displayInteractDistance or 3.5) + 4.0) then return true end
+    end
+    return false
+end
+
+local function finishTestDrive(src, forced)
+    local td = testDrives[src]
+    if not td then return end
+    testDrives[src] = nil
+    testCooldown[src] = os.time()
+
+    if td.netId then
+        local veh = NetworkGetEntityFromNetworkId(td.netId)
+        if veh and veh ~= 0 and DoesEntityExist(veh) then DeleteEntity(veh) end
+    end
+    if td.bucket ~= nil and GetPlayerName(src) then
+        SetPlayerRoutingBucket(src, td.bucket)
+    end
+    if forced and GetPlayerName(src) then
+        TriggerClientEvent('gen_dealership:testdriveForceEnd', src, T('testdrive_over'))
+    end
+end
+
 RegisterCallback('shop:testdrive', function(src, dealershipId, vehicleId)
-    if not Config.TestDrive.enabled then return { ok = false, error = T('testdrive_disabled') } end
+    if not TD.enabled then return { ok = false, error = T('testdrive_disabled') } end
 
     local d = ById[tonumber(dealershipId)]
     if not d then return { ok = false, error = T('vehicle_not_found') } end
     if not canUse(src, d) then return { ok = false, error = T('no_access') } end
-    if not IsNear(src, d.shop, Config.PurchaseDistance) then return { ok = false, error = T('too_far') } end
+    if not nearDealership(src, d) then return { ok = false, error = T('too_far') } end
 
     local v = FindVehicle(d, vehicleId)
     if not v then return { ok = false, error = T('vehicle_not_found') } end
 
     local now = os.time()
-    local active = testDrives[src]
-    if active and active.expires > now then return { ok = false, error = T('testdrive_active') } end
+    if testDrives[src] then return { ok = false, error = T('testdrive_active') } end
 
     local last = testCooldown[src]
-    if last and now - last < Config.TestDrive.cooldown then
-        return { ok = false, error = T('testdrive_cooldown', Config.TestDrive.cooldown - (now - last)) }
+    if last and now - last < TD.cooldown then
+        return { ok = false, error = T('testdrive_cooldown', TD.cooldown - (now - last)) }
     end
 
-    local plate = (Config.TestDrive.platePrefix .. tostring(math.random(1000, 9999))):sub(1, 8)
-    testDrives[src] = { expires = now + Config.TestDrive.duration + 30 }
+    local plate = (TD.platePrefix .. tostring(math.random(1000, 9999))):sub(1, 8)
+    local td = { expires = now + TD.duration + 30 }
+    if TD.privateInstance then
+        td.bucket = GetPlayerRoutingBucket(src)
+        SetPlayerRoutingBucket(src, TD.bucketBase + src)
+    end
+    testDrives[src] = td
     issuedPlates[src] = plate
 
-    return { ok = true, plate = plate, model = v.model, duration = Config.TestDrive.duration }
+    return {
+        ok = true, plate = plate, model = v.model, label = v.label,
+        duration = TD.duration, instanced = TD.privateInstance == true,
+    }
+end)
+
+RegisterNetEvent('gen_dealership:testdriveSpawned', function(netId)
+    local td = testDrives[source]
+    if td and not td.netId then td.netId = tonumber(netId) end
 end)
 
 RegisterNetEvent('gen_dealership:testdriveEnd', function()
-    local src = source
-    if testDrives[src] then
-        testDrives[src] = nil
-        testCooldown[src] = os.time()
+    finishTestDrive(source, false)
+end)
+
+-- Safety net: end test drives the client never closed (crash, script error, …)
+CreateThread(function()
+    while true do
+        Wait(5000)
+        local now = os.time()
+        for src, td in pairs(testDrives) do
+            if now > td.expires then finishTestDrive(src, true) end
+        end
     end
+end)
+
+AddEventHandler('onResourceStop', function(res)
+    if res ~= GetCurrentResourceName() then return end
+    for src in pairs(testDrives) do finishTestDrive(src, false) end
 end)
 
 RegisterNetEvent('gen_dealership:vehicleSpawned', function(netId, plate)
@@ -435,7 +492,8 @@ end)
 
 AddEventHandler('playerDropped', function()
     local src = source
-    purchaseLock[src], testDrives[src], testCooldown[src], issuedPlates[src] = nil, nil, nil, nil
+    finishTestDrive(src, false)
+    purchaseLock[src], testCooldown[src], issuedPlates[src] = nil, nil, nil
 end)
 
 -- ---------------------------------------------------------------------------
