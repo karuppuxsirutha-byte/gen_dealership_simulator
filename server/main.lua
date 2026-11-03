@@ -14,11 +14,17 @@ local issuedPlates = {}   -- [src] = plate the client is allowed to request keys
 
 local function reload()
     Dealerships, ById = DB.LoadAll()
+    for _, d in ipairs(Dealerships) do Biz.Decorate(d) end
 end
 
 local function broadcast(target)
     TriggerClientEvent('gen_dealership:sync', target or -1, Dealerships)
 end
+
+-- Shared with server/business.lua & server/simulation.lua
+function GetDealershipById(id) return ById[tonumber(id)] end
+function GetAllDealerships() return Dealerships end
+function BroadcastDealerships(target) broadcast(target) end
 
 local function trim(s)
     if type(s) ~= 'string' then return nil end
@@ -58,7 +64,7 @@ local function sanitizeVec4(t)
     }
 end
 
-local function isNear(src, point, maxDist)
+function IsNear(src, point, maxDist)
     if not point then return false end
     local ped = GetPlayerPed(src)
     if not ped or ped == 0 then return true end -- OneSync off: cannot verify
@@ -71,7 +77,7 @@ local function canUse(src, d)
     return Bridge.GetJob(src) == d.job
 end
 
-local function findVehicle(d, vehicleId)
+function FindVehicle(d, vehicleId)
     vehicleId = tonumber(vehicleId)
     for _, v in ipairs(d.vehicles) do
         if v.id == vehicleId then return v end
@@ -157,11 +163,14 @@ local function sanitizeDealership(data)
             seen[model] = true
             local category = type(v.category) == 'string' and v.category or 'other'
             if not Utils.CategoryExists(category) then category = 'other' end
+            local price = clampInt(v.price, 0, 1000000000, 0)
+            local cost = clampInt(v.cost, 0, 1000000000, nil)
             vehicles[#vehicles + 1] = {
                 model = model,
                 label = cleanText(v.label, 100) ~= '' and cleanText(v.label, 100) or model,
                 category = category,
-                price = clampInt(v.price, 0, 1000000000, 0),
+                price = price,
+                cost = cost or math.floor(price * Config.Simulation.defaultCostRatio),
                 stock = clampInt(v.stock, -1, 1000000, -1),
             }
         end
@@ -179,9 +188,12 @@ local function sanitizeDealership(data)
         end
     end
 
+    local business = type(data.business) == 'table' and data.business or {}
+
     return {
         id = id,
         name = name,
+        businessPrice = clampInt(business.price, 0, 2000000000, 0),
         label = label,
         job = job ~= '' and job or nil,
         blip = blip,
@@ -199,6 +211,7 @@ end
 
 MySQL.ready(function()
     DB.Init()
+    Biz.Load()
     reload()
     Loaded = true
     broadcast()
@@ -240,12 +253,14 @@ RegisterCallback('creator:save', function(src, data)
     local d, err = sanitizeDealership(data)
     if not d then return { ok = false, error = err } end
 
-    local ok, idOrErr = pcall(DB.Save, d)
+    local owned = d.id ~= nil and Biz.IsOwned(d.id)
+    local ok, idOrErr = pcall(DB.Save, d, owned)
     if not ok then
         print(('^1[gen_dealership] save failed: %s^0'):format(idOrErr))
         return { ok = false, error = 'Database error while saving.' }
     end
 
+    Biz.SetPrice(idOrErr, d.businessPrice)
     reload()
     broadcast()
     print(('[gen_dealership] %s saved dealership "%s" (#%s)'):format(GetPlayerName(src), d.name, idOrErr))
@@ -258,11 +273,94 @@ RegisterCallback('creator:delete', function(src, id)
     if not id or not ById[id] then return { ok = false, error = 'Unknown dealership.' } end
 
     DB.Delete(id)
+    Biz.Forget(id)
+    RemoveCustomersFor(id)
     reload()
     broadcast()
     print(('[gen_dealership] %s deleted dealership #%s'):format(GetPlayerName(src), id))
     return { ok = true, dealerships = Dealerships }
 end)
+
+RegisterCallback('creator:resetOwner', function(src, id)
+    if not Bridge.IsAdmin(src) then return { ok = false, error = T('no_permission') } end
+    id = tonumber(id)
+    if not id or not Biz.IsOwned(id) then return { ok = false, error = 'This dealership has no owner.' } end
+    Biz.ResetOwnership(id, ('Ownership revoked by admin %s'):format(GetPlayerName(src)))
+    print(('[gen_dealership] %s revoked ownership of dealership #%s'):format(GetPlayerName(src), id))
+    return { ok = true, dealerships = Dealerships }
+end)
+
+-- ---------------------------------------------------------------------------
+-- Sales
+-- ---------------------------------------------------------------------------
+
+local function validMethod(method)
+    for _, m in ipairs(Config.PaymentMethods) do
+        if m == method then return m end
+    end
+    return Config.PaymentMethods[1]
+end
+
+--- Charges the buyer, registers the vehicle, updates stock and routes revenue.
+--- Used by the self-service shop and by staff offers.
+--- @param opts table|nil { seller = src, sellerName, sellerIdentifier, kind }
+function ProcessSale(buyer, d, v, method, price, opts)
+    opts = opts or {}
+    method = validMethod(method)
+    if v.stock == 0 then return { ok = false, error = T('out_of_stock') } end
+    if purchaseLock[buyer] then return { ok = false, error = T('busy') } end
+    purchaseLock[buyer] = true
+
+    local plate = generatePlate()
+    if not plate then
+        purchaseLock[buyer] = nil
+        return { ok = false, error = T('purchase_failed') }
+    end
+    if v.stock == 0 then -- sold out while the plate was generated
+        purchaseLock[buyer] = nil
+        return { ok = false, error = T('out_of_stock') }
+    end
+
+    if not Bridge.RemoveMoney(buyer, method, price, ('vehicle-purchase:%s'):format(v.model)) then
+        purchaseLock[buyer] = nil
+        return { ok = false, error = T('not_enough_money') }
+    end
+
+    -- reserve the unit before any further yield
+    local reserved = v.stock > 0
+    if reserved then v.stock = v.stock - 1 end
+
+    local ok, given = pcall(Bridge.GiveVehicle, buyer, v.model, plate, d.name)
+    if not ok or not given then
+        if not ok then print(('^1[gen_dealership] GiveVehicle failed: %s^0'):format(given)) end
+        Bridge.AddMoney(buyer, method, price, 'vehicle-purchase-refund')
+        if reserved then v.stock = v.stock + 1 end
+        purchaseLock[buyer] = nil
+        return { ok = false, error = T('purchase_failed') }
+    end
+    if reserved then DB.SetStock(v.id, v.stock) end
+
+    local commission = 0
+    if Biz.IsOwned(d.id) then
+        Biz.AddBalance(d.id, price, 'sale', ('%s sold to %s'):format(v.label, Bridge.GetName(buyer)), opts.sellerName or 'Self-service')
+        if opts.seller then commission = Biz.PayCommission(d.id, opts.seller, price, v.label) end
+    end
+
+    DB.LogSale(d.name, Bridge.GetIdentifier(buyer), v.model, plate, price, method, opts.sellerIdentifier, opts.kind or 'shop')
+    issuedPlates[buyer] = plate
+    purchaseLock[buyer] = nil
+    if reserved then broadcast() end
+
+    return {
+        ok = true,
+        plate = plate,
+        model = v.model,
+        label = v.label,
+        price = price,
+        priceText = Utils.FormatMoney(price),
+        commission = commission,
+    }
+end
 
 -- ---------------------------------------------------------------------------
 -- Shop
@@ -272,57 +370,13 @@ RegisterCallback('shop:buy', function(src, dealershipId, vehicleId, method)
     local d = ById[tonumber(dealershipId)]
     if not d then return { ok = false, error = T('vehicle_not_found') } end
     if not canUse(src, d) then return { ok = false, error = T('no_access') } end
-    if not isNear(src, d.shop, Config.PurchaseDistance) then return { ok = false, error = T('too_far') } end
+    if not IsNear(src, d.shop, Config.PurchaseDistance) then return { ok = false, error = T('too_far') } end
+    if Biz.IsOwned(d.id) and not Config.Simulation.selfService then return { ok = false, error = T('staff_only') } end
 
-    local v = findVehicle(d, vehicleId)
+    local v = FindVehicle(d, vehicleId)
     if not v then return { ok = false, error = T('vehicle_not_found') } end
-    if v.stock == 0 then return { ok = false, error = T('out_of_stock') } end
 
-    local allowed = false
-    for _, m in ipairs(Config.PaymentMethods) do
-        if m == method then allowed = true break end
-    end
-    if not allowed then method = Config.PaymentMethods[1] end
-
-    if purchaseLock[src] then return { ok = false, error = T('busy') } end
-    purchaseLock[src] = true
-
-    local plate = generatePlate()
-    if not plate then
-        purchaseLock[src] = nil
-        return { ok = false, error = T('purchase_failed') }
-    end
-
-    if not Bridge.RemoveMoney(src, method, v.price, ('vehicle-purchase:%s'):format(v.model)) then
-        purchaseLock[src] = nil
-        return { ok = false, error = T('not_enough_money') }
-    end
-
-    local ok, given = pcall(Bridge.GiveVehicle, src, v.model, plate, d.name)
-    if not ok or not given then
-        if not ok then print(('^1[gen_dealership] GiveVehicle failed: %s^0'):format(given)) end
-        Bridge.AddMoney(src, method, v.price, 'vehicle-purchase-refund')
-        purchaseLock[src] = nil
-        return { ok = false, error = T('purchase_failed') }
-    end
-
-    if v.stock > 0 then
-        v.stock = v.stock - 1
-        DB.SetStock(v.id, v.stock)
-        broadcast()
-    end
-
-    DB.LogSale(d.name, Bridge.GetIdentifier(src), v.model, plate, v.price, method)
-    issuedPlates[src] = plate
-    purchaseLock[src] = nil
-
-    return {
-        ok = true,
-        plate = plate,
-        model = v.model,
-        label = v.label,
-        priceText = Utils.FormatMoney(v.price),
-    }
+    return ProcessSale(src, d, v, method, v.price, { kind = 'shop' })
 end)
 
 RegisterCallback('shop:testdrive', function(src, dealershipId, vehicleId)
@@ -331,9 +385,9 @@ RegisterCallback('shop:testdrive', function(src, dealershipId, vehicleId)
     local d = ById[tonumber(dealershipId)]
     if not d then return { ok = false, error = T('vehicle_not_found') } end
     if not canUse(src, d) then return { ok = false, error = T('no_access') } end
-    if not isNear(src, d.shop, Config.PurchaseDistance) then return { ok = false, error = T('too_far') } end
+    if not IsNear(src, d.shop, Config.PurchaseDistance) then return { ok = false, error = T('too_far') } end
 
-    local v = findVehicle(d, vehicleId)
+    local v = FindVehicle(d, vehicleId)
     if not v then return { ok = false, error = T('vehicle_not_found') } end
 
     local now = os.time()

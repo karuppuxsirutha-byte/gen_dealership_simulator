@@ -192,3 +192,7 @@ end)
 RegisterNUICallback('creatorDelete', function(data, cb)
     cb(TriggerCallback('creator:delete', data.id) or { ok = false, error = 'No response from server.' })
 end)
+
+RegisterNUICallback('creatorResetOwner', function(data, cb)
+    cb(TriggerCallback('creator:resetOwner', data.id) or { ok = false, error = 'No response from server.' })
+end)

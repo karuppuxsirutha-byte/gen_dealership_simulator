@@ -8,7 +8,17 @@ State = {
     creatorOpen = false,
     placing = false,
     testDrive = nil,
+    roles = {},          -- ["<dealershipId>"] = 'owner' | 'manager' | 'sales'
+    manageOpen = false,
+    manageId = nil,
+    negotiating = false,
+    offerOpen = false,
 }
+
+function UIBusy()
+    return State.shopOpen or State.creatorOpen or State.placing or State.testDrive ~= nil
+        or State.manageOpen or State.negotiating or State.offerOpen
+end
 
 local Blips = {}
 local Displays = {}      -- [dealershipId] = { [spotIndex] = entity }
@@ -40,7 +50,7 @@ function ShowHelp(msg)
     EndTextCommandDisplayHelp(0, false, false, -1)
 end
 
-local function drawText3D(coords, text)
+function DrawText3D(coords, text)
     local onScreen, x, y = GetScreenCoordFromWorldCoord(coords.x, coords.y, coords.z)
     if not onScreen then return end
     SetTextScale(0.32, 0.32)
@@ -114,7 +124,10 @@ local function refreshBlips()
 end
 
 function OnJobChanged()
-    SetTimeout(500, refreshBlips)
+    SetTimeout(500, function()
+        refreshBlips()
+        if RefreshRoles then RefreshRoles() end
+    end)
 end
 
 -- ---------------------------------------------------------------------------
@@ -226,9 +239,14 @@ end)
 function CloseUI()
     SetNuiFocus(false, false)
     SendNUIMessage({ action = 'close' })
+    if State.negotiating then TriggerServerEvent('gen_dealership:customerRelease') end
     State.shopOpen = false
     State.shopId = nil
     State.creatorOpen = false
+    State.manageOpen = false
+    State.manageId = nil
+    State.negotiating = false
+    State.offerOpen = false
 end
 
 local function openShop(d)
@@ -243,6 +261,9 @@ local function openShop(d)
             label = d.label,
             testDrive = Config.TestDrive.enabled,
             testDriveDuration = Config.TestDrive.duration,
+            business = d.business,
+            selfService = Config.Simulation.selfService or not (d.business and d.business.owned),
+            role = State.roles[tostring(d.id)],
         },
         vehicles = d.vehicles,
         categories = Config.Categories,
@@ -261,7 +282,7 @@ end)
 -- Spawning purchased / test drive vehicles
 -- ---------------------------------------------------------------------------
 
-local function spawnPlayerVehicle(model, coords, plate)
+function SpawnPlayerVehicle(model, coords, plate)
     local hash = LoadVehicleModel(model)
     if not hash then return nil end
 
@@ -290,14 +311,14 @@ local function spawnPlayerVehicle(model, coords, plate)
     return veh
 end
 
-local function spotBlocked(coords)
+function SpotBlocked(coords)
     return IsAnyVehicleNearPoint(coords.x + 0.0, coords.y + 0.0, coords.z + 0.0, 3.0)
 end
 
 RegisterNUICallback('shopBuy', function(data, cb)
     local d = State.shopId and findDealership(State.shopId)
     if not d or not d.spawn then return cb({ ok = false, error = T('vehicle_not_found') }) end
-    if spotBlocked(d.spawn) then return cb({ ok = false, error = T('spawn_blocked') }) end
+    if SpotBlocked(d.spawn) then return cb({ ok = false, error = T('spawn_blocked') }) end
 
     local res = TriggerCallback('shop:buy', d.id, data.vehicleId, data.method)
     if not res then return cb({ ok = false, error = 'No response from server.' }) end
@@ -307,9 +328,18 @@ RegisterNUICallback('shopBuy', function(data, cb)
     CloseUI()
     DoScreenFadeOut(300)
     Wait(350)
-    spawnPlayerVehicle(res.model, d.spawn, res.plate)
+    SpawnPlayerVehicle(res.model, d.spawn, res.plate)
     DoScreenFadeIn(400)
     Bridge.Notify(T('purchased', res.label, res.priceText, res.plate), 'success')
+end)
+
+RegisterNUICallback('shopBuyBusiness', function(data, cb)
+    local res = TriggerCallback('biz:buyBusiness', State.shopId, data.method)
+    cb(res or { ok = false, error = 'No response from server.' })
+    if res and res.ok then
+        CloseUI()
+        Bridge.Notify(res.message, 'success')
+    end
 end)
 
 local function endTestDrive()
@@ -338,7 +368,7 @@ RegisterNUICallback('shopTestDrive', function(data, cb)
     if not d then return cb({ ok = false, error = T('vehicle_not_found') }) end
     local point = d.testdrive or d.spawn
     if not point then return cb({ ok = false, error = T('testdrive_disabled') }) end
-    if spotBlocked(point) then return cb({ ok = false, error = T('spawn_blocked') }) end
+    if SpotBlocked(point) then return cb({ ok = false, error = T('spawn_blocked') }) end
 
     local res = TriggerCallback('shop:testdrive', d.id, data.vehicleId)
     if not res then return cb({ ok = false, error = 'No response from server.' }) end
@@ -351,7 +381,7 @@ RegisterNUICallback('shopTestDrive', function(data, cb)
 
     DoScreenFadeOut(300)
     Wait(350)
-    local veh = spawnPlayerVehicle(res.model, point, res.plate)
+    local veh = SpawnPlayerVehicle(res.model, point, res.plate)
     DoScreenFadeIn(400)
     if not veh then
         TriggerServerEvent('gen_dealership:testdriveEnd')
@@ -397,7 +427,7 @@ CreateThread(function()
     local m = Config.Marker
     while true do
         local sleep = 750
-        if not State.shopOpen and not State.creatorOpen and not State.placing and not State.testDrive then
+        if not UIBusy() then
             local pos = GetEntityCoords(PlayerPedId())
 
             for _, d in ipairs(State.dealerships) do
@@ -411,9 +441,12 @@ CreateThread(function()
                             true, true, 2, false, nil, nil, false)
 
                         if dist < Config.InteractDistance then
-                            ShowHelp(T('open_shop', d.label))
+                            local role = State.roles[tostring(d.id)]
+                            ShowHelp(role and T('open_shop_manage', d.label) or T('open_shop', d.label))
                             if IsControlJustReleased(0, Config.InteractKey) then
                                 openShop(d)
+                            elseif role and IsControlJustReleased(0, 47) then
+                                OpenManagement(d.id)
                             end
                         end
                     end
@@ -429,7 +462,7 @@ CreateThread(function()
                                 local spot = d.displays[i]
                                 local info = spot and findVehicleByModel(d, spot.model)
                                 if info then
-                                    drawText3D(vpos + vector3(0.0, 0.0, 1.3),
+                                    DrawText3D(vpos + vector3(0.0, 0.0, 1.3),
                                         ('%s~n~~g~%s'):format(info.label, Utils.FormatMoney(info.price)))
                                 end
                             end

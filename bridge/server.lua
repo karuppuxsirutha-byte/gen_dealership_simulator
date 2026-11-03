@@ -28,6 +28,15 @@ function Bridge.GetIdentifier(src)
     return GetPlayerIdentifierByType(src, 'license') or ('player:' .. src)
 end
 
+function Bridge.GetName(src)
+    local p = getPlayer(src)
+    if isQB and p and p.PlayerData.charinfo then
+        return ('%s %s'):format(p.PlayerData.charinfo.firstname or '', p.PlayerData.charinfo.lastname or '')
+    end
+    if fw == 'esx' and p and p.getName then return p.getName() end
+    return GetPlayerName(src) or ('Player ' .. tostring(src))
+end
+
 function Bridge.GetJob(src)
     local p = getPlayer(src)
     if not p then return nil end

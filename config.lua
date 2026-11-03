@@ -47,6 +47,53 @@ Config.Placement = {
     previewModel = 'adder',
 }
 
+-- ===========================================================================
+-- Dealership simulator (player-owned businesses)
+-- ===========================================================================
+Config.Simulation = {
+    enabled = true,
+    selfService = true,          -- players can still buy from the catalogue of an owned dealership
+    adminFullAccess = true,      -- admins can open any owned dealership's management panel
+    maxOwnedPerPlayer = 1,
+    sellBackRatio = 0.6,         -- owners can sell the business back for this share of its price
+    startReputation = 50,        -- 0-100, drives AI customer frequency and budgets
+
+    -- Pricing: wholesale cost defaults to price * ratio; owners price between cost*min and cost*max
+    defaultCostRatio = 0.7,
+    minMarkup = 0.9,
+    maxMarkup = 2.0,
+
+    -- Stock orders
+    deliveryTime = 300,          -- seconds until ordered vehicles arrive
+    maxOrderQty = 10,
+
+    -- Staff
+    maxEmployees = 12,
+    commission = { manager = 5, sales = 10 },   -- default % of the sale price
+    maxCommission = 50,
+    dutyRadius = 60.0,           -- staff within this distance of the catalogue point are "on duty"
+    offerTimeout = 60,           -- seconds a player has to answer a staff offer
+
+    -- Running costs (0 to disable), taken from the business account
+    upkeep = 0,
+    upkeepInterval = 3600,
+
+    -- AI customers spawn while staff are on duty and haggle over in-stock vehicles
+    customers = {
+        enabled = true,
+        interval = 45,           -- seconds between spawn rolls per dealership
+        baseChance = 0.45,
+        maxActive = 3,
+        patience = 300,          -- seconds before an unattended customer leaves (-1 reputation)
+        maxRounds = 3,           -- counter-offers before the customer walks
+        peds = {
+            'a_m_y_business_01', 'a_f_y_business_01', 'a_m_m_business_01', 'a_f_y_business_02',
+            'a_m_y_hipster_01', 'a_f_y_hipster_02', 'a_m_m_bevhills_02', 'a_f_m_bevhills_01',
+            'a_m_y_genstreet_01', 'a_f_y_tourist_01',
+        },
+    },
+}
+
 Config.DefaultBlip = { enabled = true, sprite = 326, color = 3, scale = 0.8 }
 
 Config.Categories = {
@@ -85,6 +132,10 @@ Config.ClassCategories = {
 
 Config.Text = {
     open_shop          = '~INPUT_CONTEXT~ Browse %s',
+    open_shop_manage   = '~INPUT_CONTEXT~ Browse %s~n~~INPUT_DETONATE~ Manage business',
+    talk_customer      = '~INPUT_CONTEXT~ Talk to customer',
+    delivered_garage   = 'The delivery spot was blocked, so your vehicle was sent to your garage.',
+    staff_only         = 'Purchases here go through a salesperson.',
     no_permission      = 'You do not have permission to do that.',
     not_enough_money   = 'You cannot afford this vehicle.',
     out_of_stock       = 'This vehicle is out of stock.',

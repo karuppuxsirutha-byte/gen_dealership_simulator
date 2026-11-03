@@ -1,6 +1,10 @@
-# gen_dealership — FiveM Vehicle Dealership Creator
+# gen_dealership — FiveM Vehicle Dealership Creator & Simulator
 
-Build vehicle dealerships **in-game**, without editing config files or restarting the server. Admins open the creator, place points with a live ghost-vehicle preview, set up a catalogue with prices and stock, and arrange showroom display cars. Players walk up, browse, test drive and buy.
+Build vehicle dealerships **in-game**, then let players **run them as businesses**.
+
+- **Creator:** admins place dealerships, catalogues and showrooms without touching config files or restarting the server.
+- **Shop:** players browse, test drive and buy.
+- **Simulator:** players can buy a dealership, order stock wholesale, set prices, hire salespeople on commission, sell to other players and haggle with AI walk-in customers.
 
 Works with **Qbox**, **QBCore**, **ESX** and **standalone** (detected automatically). The only hard dependency is **oxmysql**.
 
@@ -27,6 +31,21 @@ Works with **Qbox**, **QBCore**, **ESX** and **standalone** (detected automatica
 - Purchases check job access, distance to the dealership, stock and balance. Each player is locked to one purchase at a time, and money is refunded if registering the vehicle fails
 - A key request is only honoured for the plate the server just issued to that player
 
+**Dealership simulator**
+- **Business ownership:** admins give a dealership a business price, and a banner in the shop lets any player buy it. Owners can sell it back for 60% of the price (configurable) plus whatever is left in the account.
+- **Business account:** all sales go into the dealership's own funds. Owners withdraw, and managers can deposit. Every movement is logged.
+- **Inventory:** owned dealerships run on real stock. Managers order units at wholesale cost, and they arrive after a delivery timer. Retail prices are set within a markup range of cost.
+- **Staff:** hire nearby players as *Salesperson* or *Manager*, each with their own commission %, which is paid from business funds on every deal they close.
+  - Owner: everything.
+  - Manager: stock, pricing, hiring salespeople, deposits.
+  - Salesperson: selling.
+- **Sales desk:** staff send a priced offer to a nearby player. The player gets an accept/decline popup, pays, and the car is delivered.
+- **AI walk-in customers:** while staff are on duty (within 60 m), NPC customers turn up next to the display cars wanting a specific in-stock vehicle. Walk up, press **E** and haggle:
+  - Accept their offer, counter, or decline.
+  - Each customer has a hidden budget. Push too hard and they leave; insult them and reputation drops.
+  - Reputation (0–100) controls how often customers come and how much they're willing to pay.
+- **Management panel** (press **G** at the catalogue point): sales stats and a 7-day revenue chart, inventory and orders, the sales desk, staff, and finance with the transaction log.
+
 ## Installation
 
 1. Drop the folder into your `resources` directory (for example as `[gen]/gen_dealership`).
@@ -49,6 +68,16 @@ Works with **Qbox**, **QBCore**, **ESX** and **standalone** (detected automatica
 4. **Showroom** → choose a vehicle → **Place display vehicle**.
 5. **Save dealership**. It's live for everyone immediately.
 
+## Running a dealership (simulator quick start)
+
+1. In the creator's **General** tab, set a **Business price** (for example 750000) and save.
+2. A player opens the catalogue and clicks **Buy business**. Unlimited stock becomes 0, so the dealership has to restock.
+3. Press **G** at the catalogue point. Deposit money under **Finance**, then order vehicles under **Inventory** and set your prices.
+4. Hire staff under **Staff** (stand next to them, then press **Refresh**).
+5. Stay at the dealership. Walk-in customers appear by the display cars: press **E** to negotiate. Or use the **Sales desk** to sell to a player standing nearby.
+
+Admins can revoke ownership from the creator. With `Config.Simulation.adminFullAccess`, admins can also open any owned dealership's panel.
+
 ## Integrations
 
 | What | Supported out of the box | Where to change |
@@ -63,6 +92,12 @@ Works with **Qbox**, **QBCore**, **ESX** and **standalone** (detected automatica
 
 Everything lives in `config.lua`: command name, ACE, interaction key and distances, plate format, payment methods, test drive duration and cooldown, limits, categories and all player-facing text.
 
+`Config.Simulation` holds the business settings:
+- Markup range, delivery time and default commissions
+- Duty radius, upkeep and sell-back ratio
+- Whether owned dealerships still allow self-service purchases
+- AI customers: spawn rate, patience, negotiation rounds and ped models
+
 ## Exports (server)
 
 ```lua
@@ -76,5 +111,9 @@ exports.gen_dealership:GetDealership('pdm')  -- one dealership by identifier
 |---|---|
 | `gen_dealerships` | dealership definitions (points, blip, showroom) |
 | `gen_dealership_vehicles` | catalogue per dealership (price, stock) |
-| `gen_dealership_sales` | sales log (who bought what, for how much, and how they paid) |
+| `gen_dealership_sales` | sales log (buyer, price, payment, seller, kind: shop / staff / npc) |
+| `gen_dealership_business` | ownership, business funds, reputation, business price |
+| `gen_dealership_employees` | staff per dealership (role, commission) |
+| `gen_dealership_orders` | wholesale stock orders and delivery times |
+| `gen_dealership_transactions` | business ledger (sales, orders, commissions, deposits…) |
 | `gen_dealership_owned` | owned vehicles, standalone mode only |

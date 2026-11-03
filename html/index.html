@@ -72,6 +72,18 @@
               </label>
             </div>
             <p class="hint">Sprite and colour IDs: docs.fivem.net/docs/game-references/blips</p>
+
+            <h3 class="section-title">Business</h3>
+            <div class="grid-2">
+              <label class="field">
+                <span>Business price <em>players can buy the dealership · 0 = not for sale</em></span>
+                <input class="input" type="number" min="0" data-field="business.price" placeholder="0">
+              </label>
+              <div class="field">
+                <span>Owner</span>
+                <div class="owner-box" id="c-owner"></div>
+              </div>
+            </div>
           </section>
 
           <!-- Locations -->
@@ -88,12 +100,14 @@
               <input class="input" id="v-label" placeholder="Label">
               <select class="input" id="v-cat"></select>
               <input class="input" id="v-price" type="number" min="0" placeholder="Price">
+              <input class="input" id="v-cost" type="number" min="0" placeholder="Cost" title="Wholesale cost owners pay to restock. Empty = 70% of price">
               <input class="input" id="v-stock" type="number" min="-1" placeholder="Stock ∞" title="Leave empty or -1 for unlimited">
               <button class="btn primary" id="v-add">Add</button>
             </div>
+            <p class="hint hidden" id="v-owned-note">This dealership is player-owned: the owner sets prices and orders stock, so those fields are locked here.</p>
             <div class="table-wrap">
               <table class="table">
-                <thead><tr><th>Model</th><th>Label</th><th>Category</th><th>Price</th><th>Stock</th><th></th></tr></thead>
+                <thead><tr><th>Model</th><th>Label</th><th>Category</th><th>Price</th><th>Cost</th><th>Stock</th><th></th></tr></thead>
                 <tbody id="v-body"></tbody>
               </table>
             </div>
@@ -139,6 +153,35 @@
   </div>
 </div>
 
+<!-- ======================= BUSINESS MANAGEMENT ======================= -->
+<div id="manage" class="window hidden" role="dialog" aria-label="Dealership management">
+  <header class="win-head">
+    <div class="title"><span class="logo">◆</span> <span id="b-title"></span> <span class="tag" id="b-role"></span></div>
+    <div class="balances"><div class="balance">Business funds<b id="b-balance"></b></div></div>
+    <button class="icon-btn" data-close title="Close (Esc)">✕</button>
+  </header>
+  <nav class="tabs" id="b-tabs"></nav>
+  <div class="panes" id="b-pane"></div>
+</div>
+
+<!-- ======================= NEGOTIATION ======================= -->
+<div id="nego" class="window compact hidden" role="dialog" aria-label="Customer negotiation">
+  <header class="win-head">
+    <div class="title"><span class="logo">◆</span> Customer</div>
+    <button class="icon-btn" data-close title="Walk away (Esc)">✕</button>
+  </header>
+  <div class="compact-body" id="n-body"></div>
+</div>
+
+<!-- ======================= INCOMING OFFER ======================= -->
+<div id="offer" class="window compact hidden" role="dialog" aria-label="Vehicle offer">
+  <header class="win-head">
+    <div class="title"><span class="logo">◆</span> Vehicle offer</div>
+    <span class="muted small" id="o-timer"></span>
+  </header>
+  <div class="compact-body" id="o-body"></div>
+</div>
+
 <!-- ======================= MODAL / TOASTS ======================= -->
 <div id="modal" class="modal hidden">
   <div class="modal-box">
@@ -153,5 +196,6 @@
 <div id="toasts"></div>
 
 <script src="app.js"></script>
+<script src="business.js"></script>
 </body>
 </html>

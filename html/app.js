@@ -87,16 +87,18 @@ function normalizeDealership(d) {
   d.shop = d.shop || null;
   d.spawn = d.spawn || null;
   d.testdrive = d.testdrive || null;
+  d.business = Object.assign({ owned: false, ownerName: '', price: 0 }, d.business || {});
   return d;
 }
 
 function closeAll() {
-  $('#creator').classList.add('hidden');
-  $('#shop').classList.add('hidden');
+  $$('.window').forEach((w) => w.classList.add('hidden'));
   closeModal(false);
   S.creator.open = false;
   S.shop = null;
+  document.dispatchEvent(new Event('ui:closed'));
 }
+const anyWindowOpen = () => $$('.window').some((w) => !w.classList.contains('hidden'));
 
 async function requestClose() {
   if (S.creator.open && S.creator.dirty) {
@@ -134,7 +136,7 @@ function openCreator(data) {
   }
 
   $('#v-cat').innerHTML = catOptions('other');
-  $('#shop').classList.add('hidden');
+  $$('.window:not(#offer)').forEach((w) => w.classList.add('hidden'));
   $('#creator').classList.remove('hidden');
   renderCreator();
 }
@@ -238,6 +240,9 @@ function renderCreatorForm() {
     else el.value = v ?? '';
   });
   $('#c-delete').classList.toggle('hidden', d.id == null);
+  $('#c-owner').innerHTML = d.business.owned
+    ? `<span>${esc(d.business.ownerName || 'Unknown')}</span><button class="btn ghost sm danger-text" id="c-revoke">Revoke ownership</button>`
+    : '<span class="muted">State-owned (no player owner)</span>';
 
   renderTabs();
   renderLocations();
@@ -270,6 +275,20 @@ $$('[data-field]').forEach((el) => {
     markDirty();
     if (el.dataset.field === 'label') renderCreatorList();
   });
+});
+
+$('#c-owner').addEventListener('click', async (e) => {
+  if (!e.target.closest('#c-revoke')) return;
+  const d = S.creator.current;
+  const ok = await askConfirm('Revoke ownership?', `${d.business.ownerName} loses ${d.label}, its funds and its staff. They are not refunded.`, 'Revoke', true);
+  if (!ok) return;
+  const res = await post('creatorResetOwner', { id: d.id });
+  if (!res || !res.ok) return toast((res && res.error) || 'Failed.', 'error');
+  S.creator.list = arr(res.dealerships).map(normalizeDealership);
+  const fresh = S.creator.list.find((x) => x.id === d.id);
+  if (fresh) d.business = fresh.business;
+  renderCreator();
+  toast('Ownership revoked.', 'success');
 });
 
 /* ---------- locations ---------- */
@@ -339,15 +358,18 @@ function onPlacementResult(msg) {
 /* ---------- vehicles ---------- */
 function renderVehicles() {
   const d = S.creator.current;
+  const owned = d.business.owned;
+  $('#v-owned-note').classList.toggle('hidden', !owned);
   const rows = d.vehicles.map((v, i) => `<tr data-idx="${i}">
       <td class="model">${esc(v.model)}</td>
       <td><input class="input sm" data-vf="label" value="${esc(v.label)}" maxlength="100"></td>
       <td><select class="input sm" data-vf="category">${catOptions(v.category)}</select></td>
-      <td><input class="input sm" type="number" min="0" data-vf="price" value="${v.price}"></td>
-      <td><input class="input sm" type="number" min="-1" data-vf="stock" value="${v.stock}" title="-1 = unlimited"></td>
+      <td><input class="input sm" type="number" min="0" data-vf="price" value="${v.price}" ${owned ? 'disabled' : ''}></td>
+      <td><input class="input sm" type="number" min="0" data-vf="cost" value="${v.cost ?? ''}" placeholder="auto"></td>
+      <td><input class="input sm" type="number" min="-1" data-vf="stock" value="${v.stock}" title="-1 = unlimited" ${owned ? 'disabled' : ''}></td>
       <td><button class="btn ghost sm danger-text" data-vremove="${i}" title="Remove">✕</button></td>
     </tr>`);
-  $('#v-body').innerHTML = rows.join('') || '<tr class="empty-row"><td colspan="6">No vehicles yet. Add one above using its spawn name.</td></tr>';
+  $('#v-body').innerHTML = rows.join('') || '<tr class="empty-row"><td colspan="7">No vehicles yet. Add one above using its spawn name.</td></tr>';
   renderDisplayModelSelect();
 }
 
@@ -381,8 +403,10 @@ $('#v-add').addEventListener('click', async () => {
   const stockRaw = $('#v-stock').value;
   const stock = stockRaw === '' ? -1 : Math.max(-1, Math.floor(Number(stockRaw)));
 
-  d.vehicles.push({ model, label: $('#v-label').value.trim() || res.label, category: $('#v-cat').value, price, stock });
-  ['#v-model', '#v-label', '#v-price', '#v-stock'].forEach((s) => { $(s).value = ''; });
+  const costRaw = $('#v-cost').value;
+  const cost = costRaw === '' ? null : Math.max(0, Math.floor(Number(costRaw)));
+  d.vehicles.push({ model, label: $('#v-label').value.trim() || res.label, category: $('#v-cat').value, price, cost, stock });
+  ['#v-model', '#v-label', '#v-price', '#v-cost', '#v-stock'].forEach((s) => { $(s).value = ''; });
   $('#v-model').focus();
   markDirty();
   renderVehicles();
@@ -396,6 +420,7 @@ $('#v-body').addEventListener('input', (e) => {
   const field = el.dataset.vf;
   if (field === 'price') v.price = Math.max(0, Math.floor(Number(el.value) || 0));
   else if (field === 'stock') v.stock = el.value === '' ? -1 : Math.max(-1, Math.floor(Number(el.value)));
+  else if (field === 'cost') v.cost = el.value === '' ? null : Math.max(0, Math.floor(Number(el.value)));
   else v[field] = el.value;
   markDirty();
 });
@@ -553,9 +578,10 @@ function openShop(data) {
     selected: null,
     busy: false,
   };
-  $('#s-title').textContent = data.dealership.label;
+  const biz = data.dealership.business || {};
+  $('#s-title').innerHTML = esc(data.dealership.label) + (biz.owned ? ` <span class="tag">Owned by ${esc(biz.ownerName)}</span>` : '');
   $('#s-search').value = '';
-  $('#creator').classList.add('hidden');
+  $$('.window:not(#offer)').forEach((w) => w.classList.add('hidden'));
   $('#shop').classList.remove('hidden');
   renderShop();
 }
@@ -593,9 +619,20 @@ function filteredVehicles() {
 
 const stockBadge = (v) => (v.stock < 0 ? '' : v.stock === 0 ? '<span class="badge warn stock">Sold out</span>' : `<span class="badge stock">${v.stock} left</span>`);
 
+function businessBanner() {
+  const b = S.shop.dealership.business || {};
+  if (b.owned || !(b.price > 0)) return '';
+  return `<div class="biz-banner">
+    <div class="grow"><div class="row-title">This dealership is for sale</div>
+    <div class="muted small">Run it yourself: order stock, set prices, hire staff and haggle with customers.</div></div>
+    <div class="big-price">${fmtMoney(b.price)}</div>
+    <button class="btn primary" data-buybiz>Buy business</button>
+  </div>`;
+}
+
 function renderShopGrid() {
   const list = filteredVehicles();
-  $('#s-grid').innerHTML = list.map((v) => `<div class="card ${S.shop.selected === v.id ? 'active' : ''} ${v.stock === 0 ? 'sold-out' : ''}" data-vid="${v.id}">
+  $('#s-grid').innerHTML = businessBanner() + list.map((v) => `<div class="card ${S.shop.selected === v.id ? 'active' : ''} ${v.stock === 0 ? 'sold-out' : ''}" data-vid="${v.id}">
       <div class="thumb">${thumb(v.model)}${stockBadge(v)}</div>
       <div class="card-body">
         <div class="card-title">${esc(v.label)}</div>
@@ -628,7 +665,9 @@ function renderShopDetails() {
       <button class="btn ${S.shop.method === m ? 'active' : ''}" data-method="${esc(m)}">${methodLabel(m)}${b[m] != null ? `<small>${fmtMoney(b[m])}</small>` : ''}</button>`).join('')}</div>` : ''}
     <div class="actions">
       ${S.shop.dealership.testDrive ? `<button class="btn" data-act="test" ${S.shop.busy ? 'disabled' : ''}>Test drive · ${S.shop.dealership.testDriveDuration}s</button>` : ''}
-      <button class="btn primary" data-act="buy" ${soldOut || S.shop.busy ? 'disabled' : ''}>${soldOut ? 'Sold out' : `Buy for ${fmtMoney(v.price)}`}</button>
+      ${S.shop.dealership.selfService
+        ? `<button class="btn primary" data-act="buy" ${soldOut || S.shop.busy ? 'disabled' : ''}>${soldOut ? 'Sold out' : `Buy for ${fmtMoney(v.price)}`}</button>`
+        : '<div class="hint">Purchases here go through a salesperson.</div>'}
     </div>`;
 }
 
@@ -642,7 +681,15 @@ $('#s-cats').addEventListener('click', (e) => {
 
 $('#s-search').addEventListener('input', (e) => { S.shop.search = e.target.value; renderShopGrid(); });
 
-$('#s-grid').addEventListener('click', (e) => {
+$('#s-grid').addEventListener('click', async (e) => {
+  if (e.target.closest('[data-buybiz]')) {
+    const b = S.shop.dealership.business;
+    const ok = await askConfirm(`Buy ${S.shop.dealership.label}?`, `${fmtMoney(b.price)} will be paid by ${methodLabel(S.shop.method).toLowerCase()}. Stock starts empty, so you'll need to order vehicles.`, 'Buy business');
+    if (!ok || !S.shop) return;
+    const res = await post('shopBuyBusiness', { method: S.shop.method });
+    if (!res || !res.ok) toast((res && res.error) || 'Purchase failed.', 'error');
+    return;
+  }
   const card = e.target.closest('[data-vid]');
   if (!card) return;
   S.shop.selected = Number(card.dataset.vid);
@@ -702,5 +749,6 @@ window.addEventListener('message', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!$('#modal').classList.contains('hidden')) return closeModal(false);
-  if (S.creator.open || S.shop) requestClose();
+  if (!$('#offer').classList.contains('hidden')) return; // business.js declines the offer
+  if (anyWindowOpen()) requestClose();
 });
