@@ -76,4 +76,13 @@ Locales.en = {
     ad_running         = 'A campaign is already running.',
     ad_started         = '%s campaign is live!',
     ad_default         = 'Big deals today at %s! Come take a look.',
+
+    -- logistics extras
+    haul_insured       = 'Your cargo insurance paid out %s.',
+    haul_penalty       = 'Uninsured cargo lost: you were charged %s.',
+    hijack_warning     = "You're being followed! Hijackers are after your cargo. Lose them or fight back.",
+    hijack_lost        = 'You lost the hijackers.',
+    deliver_carrier    = '~INPUT_CONTEXT~ Unload carrier',
+    company_hired      = 'You were hired as a driver at %s.',
+    company_fired      = 'You no longer drive for %s.',
 }

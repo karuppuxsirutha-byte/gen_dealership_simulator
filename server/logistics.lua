@@ -1,11 +1,14 @@
--- Logistics job: ordered stock waits at a depot as shipments; players drive each
--- vehicle to the dealership's drop-off point and get paid by its condition.
+-- Logistics job: ordered stock waits at a depot as shipments. Players haul one car
+-- (single job) or several on a truck + trailer (carrier job) to the dealership's
+-- drop-off point and are paid by condition. Cargo can be insured; hijackers may strike.
 Logistics = {}
 
 local L = Config.Logistics
 local T = Utils.T
 
 local Shipments = {}   -- [id] = shipment
+local Hauls = {}       -- [id] = active haul
+local nextHaulId = 0
 local Ready = false
 
 local function now() return os.time() end
@@ -24,9 +27,17 @@ function Logistics.FeeFor(d)
     return math.floor(L.baseFee + (dist / 1000.0) * L.perKm)
 end
 
+local function isHighValue(sh) return L.highValue ~= nil and (sh.unitCost or 0) >= L.highValue.threshold end
+local function shipmentPay(sh) return math.floor(sh.fee * (isHighValue(sh) and (1 + L.highValue.bonus) or 1)) end
+
 local function persist(sh)
     MySQL.update('UPDATE gen_dealership_shipments SET status = ?, driver = ?, payout = ? WHERE id = ?',
         { sh.status, sh.driverIdent or '', sh.payout or 0, sh.id })
+end
+
+local function distanceTo(d)
+    local drop, from = dropPoint(d), depotPoint()
+    return drop and math.floor(#(vector3(from.x, from.y, from.z) - vector3(drop.x, drop.y, drop.z))) or 0
 end
 
 -- ---------------------------------------------------------------------------
@@ -47,7 +58,7 @@ function Logistics.Load()
             MySQL.update("UPDATE gen_dealership_shipments SET status = 'waiting', driver = '' WHERE id = ?", { r.id })
         end
         local key = r.dealership_id .. ':' .. r.order_id
-        remaining[key] = { r.dealership_id, r.order_id, (remaining[key] and remaining[key][3] or 0) + 1 }
+        remaining[key] = (remaining[key] or 0) + 1
     end
 
     -- Keep business order bookkeeping in line with the shipments that are actually left
@@ -56,8 +67,7 @@ function Logistics.Load()
         if s then
             for _, o in ipairs(s.orders) do
                 if o.arrives == 0 then
-                    local left = remaining[d.id .. ':' .. o.id]
-                    Biz.SetOrderRemaining(d.id, o.id, left and left[3] or 0)
+                    Biz.SetOrderRemaining(d.id, o.id, remaining[d.id .. ':' .. o.id] or 0)
                 end
             end
         end
@@ -65,30 +75,23 @@ function Logistics.Load()
     Ready = true
 end
 
-function Logistics.Forget(dealershipId)
-    for id, sh in pairs(Shipments) do
-        if sh.dealershipId == dealershipId then
-            if sh.status == 'transit' then Logistics.Fail(sh, 'The dealership closed down.') end
-            Shipments[id] = nil
-        end
-    end
-end
-
-local function canHaul(src, sh)
-    if not L.job or L.job == '' then return true end
-    if Bridge.GetJob(src) == L.job then return true end
-    if L.staffCanDeliver and sh and Biz.RoleOf(sh.dealershipId, Bridge.GetIdentifier(src)) then return true end
-    return false
+local function memberOfCompany(src)
+    return Company and Company.IsMember(Bridge.GetIdentifier(src))
 end
 
 local function isDriver(src)
-    return (not L.job or L.job == '') or Bridge.GetJob(src) == L.job
+    return (not L.job or L.job == '') or Bridge.GetJob(src) == L.job or memberOfCompany(src)
+end
+
+local function canHaul(src, sh)
+    if isDriver(src) then return true end
+    return L.staffCanDeliver and sh ~= nil and Biz.RoleOf(sh.dealershipId, Bridge.GetIdentifier(src)) ~= nil
 end
 
 local function notifyDrivers(msg)
     for _, p in ipairs(GetPlayers()) do
         local src = tonumber(p)
-        if L.job and L.job ~= '' and Bridge.GetJob(src) == L.job then
+        if L.job and L.job ~= '' and (Bridge.GetJob(src) == L.job or memberOfCompany(src)) then
             Bridge.Notify(src, msg, 'primary')
         end
     end
@@ -117,7 +120,8 @@ function Logistics.OrderSummary(orderId)
         if sh.orderId == orderId then
             if sh.status == 'transit' then
                 out.transit = out.transit + 1
-                out.drivers[#out.drivers + 1] = sh.driverName
+                local h = sh.haulId and Hauls[sh.haulId]
+                if h then out.drivers[#out.drivers + 1] = h.driverName end
             else
                 out.waiting = out.waiting + 1
                 if sh.autoAt > 0 then
@@ -130,8 +134,19 @@ function Logistics.OrderSummary(orderId)
     return out
 end
 
+--- Admin dashboard figures
+function Logistics.Totals()
+    local waiting, transit = 0, 0
+    for _, sh in pairs(Shipments) do
+        if sh.status == 'transit' then transit = transit + 1 else waiting = waiting + 1 end
+    end
+    local hauls = 0
+    for _ in pairs(Hauls) do hauls = hauls + 1 end
+    return { waiting = waiting, transit = transit, hauls = hauls }
+end
+
 -- ---------------------------------------------------------------------------
--- Arrival (driver or NPC freight)
+-- Arrival & failure
 -- ---------------------------------------------------------------------------
 
 local function arrive(sh, how, actor)
@@ -150,150 +165,292 @@ local function arrive(sh, how, actor)
     BroadcastDealerships()
 end
 
-local function deleteHaulVehicle(sh)
-    if not sh.netId then return end
-    local ent = NetworkGetEntityFromNetworkId(sh.netId)
-    if ent and ent ~= 0 and DoesEntityExist(ent) then DeleteEntity(ent) end
+local function entityOf(netId)
+    if not netId then return nil end
+    local ent = NetworkGetEntityFromNetworkId(netId)
+    if ent and ent ~= 0 and DoesEntityExist(ent) then return ent end
 end
 
---- Puts a hauled shipment back on the board.
-function Logistics.Fail(sh, reason)
-    deleteHaulVehicle(sh)
-    local driver = sh.driver
-    sh.status, sh.driver, sh.driverIdent, sh.driverName, sh.netId, sh.plate, sh.deadline = 'waiting', nil, nil, nil, nil, nil, nil
-    persist(sh)
+local function haulOf(src)
+    for _, h in pairs(Hauls) do
+        if h.driver == src then return h end
+    end
+end
+
+--- Ends a haul without delivery. Shipments go back on the board.
+--- @param lost boolean cargo destroyed (insurance pays out / penalty applies)
+function Logistics.Fail(h, reason, lost)
+    if not Hauls[h.id] then return end
+    Hauls[h.id] = nil
+    for _, net in ipairs({ h.vehicleNet, h.trailerNet }) do
+        local ent = entityOf(net)
+        if ent then DeleteEntity(ent) end
+    end
+    for _, sh in ipairs(h.shipments) do
+        if Shipments[sh.id] then
+            sh.status, sh.haulId, sh.driverIdent = 'waiting', nil, nil
+            persist(sh)
+        end
+    end
+
+    local driver = h.driver
     if driver and GetPlayerName(driver) then
+        if lost then
+            if h.insured then
+                local comp = math.floor(h.payout * L.insurance.payout)
+                Bridge.AddMoney(driver, 'bank', comp, 'logistics-insurance')
+                Bridge.Notify(driver, T('haul_insured', Utils.FormatMoney(comp)), 'primary')
+            else
+                local penalty = math.floor(h.payout * L.insurance.uninsuredPenalty)
+                if penalty > 0 then
+                    Bridge.RemoveMoney(driver, 'bank', penalty, 'logistics-penalty')
+                    Bridge.Notify(driver, T('haul_penalty', Utils.FormatMoney(penalty)), 'error')
+                end
+            end
+        end
         TriggerClientEvent('gen_dealership:logistics:ended', driver, reason)
         Bridge.Notify(driver, T('haul_failed', reason), 'error')
     end
-end
-
--- ---------------------------------------------------------------------------
--- Callbacks
--- ---------------------------------------------------------------------------
-
-local function activeFor(src)
-    for _, sh in pairs(Shipments) do
-        if sh.status == 'transit' and sh.driver == src then return sh end
+    if lost then
+        Webhooks.Send('logistics', 'Freight lost', reason, {
+            Webhooks.Field('Driver', h.driverName),
+            Webhooks.Field('Cargo', ('%d vehicle(s)'):format(#h.shipments)),
+            Webhooks.Field('Insured', h.insured and 'yes' or 'no'),
+        }, 'bad')
     end
 end
 
-local function publicShipment(sh, d)
-    local drop = dropPoint(d)
-    local from = depotPoint()
-    return {
-        id = sh.id, label = sh.label, model = sh.model,
-        dealership = d.label, payout = sh.fee,
-        distance = drop and math.floor(#(vector3(from.x, from.y, from.z) - vector3(drop.x, drop.y, drop.z))) or 0,
-    }
+function Logistics.Forget(dealershipId)
+    for _, h in pairs(Hauls) do
+        if h.dealershipId == dealershipId then Logistics.Fail(h, 'The dealership closed down.', false) end
+    end
+    for id, sh in pairs(Shipments) do
+        if sh.dealershipId == dealershipId then Shipments[id] = nil end
+    end
 end
 
-RegisterCallback('logistics:board', function(src)
+-- ---------------------------------------------------------------------------
+-- Board
+-- ---------------------------------------------------------------------------
+
+function Logistics.Board(src)
     if not Logistics.Enabled() then return { ok = false, error = 'Logistics are disabled.' } end
     if not IsNear(src, depotPoint(), 15.0) then return { ok = false, error = T('too_far') } end
 
     local driver = isDriver(src)
-    local list = {}
+    local singles, groups = {}, {}
     for _, sh in pairs(Shipments) do
         if sh.status == 'waiting' and (driver or canHaul(src, sh)) then
             local d = GetDealershipById(sh.dealershipId)
-            if d then list[#list + 1] = publicShipment(sh, d) end
+            if d then
+                singles[#singles + 1] = {
+                    id = sh.id, label = sh.label, model = sh.model, dealership = d.label,
+                    payout = shipmentPay(sh), distance = distanceTo(d), highValue = isHighValue(sh),
+                }
+                groups[d.id] = groups[d.id] or {}
+                table.insert(groups[d.id], sh)
+            end
         end
     end
-    table.sort(list, function(a, b) return a.payout > b.payout end)
+    table.sort(singles, function(a, b) return a.payout > b.payout end)
 
-    if not driver and #list == 0 and not activeFor(src) then
-        return { ok = false, error = ('Only %s workers can haul freight here.'):format(L.job) }
+    local carriers = {}
+    if L.carrier.enabled then
+        for dId, list in pairs(groups) do
+            if #list >= L.carrier.minLoad then
+                table.sort(list, function(a, b) return a.id < b.id end)
+                local pay, labels, hv = 0, {}, false
+                for i = 1, math.min(#list, L.carrier.capacity) do
+                    pay = pay + shipmentPay(list[i])
+                    labels[#labels + 1] = list[i].label
+                    hv = hv or isHighValue(list[i])
+                end
+                local d = GetDealershipById(dId)
+                carriers[#carriers + 1] = {
+                    dealershipId = dId, dealership = d.label, count = #labels, waiting = #list,
+                    labels = labels, payout = math.floor(pay * L.carrier.bonus), distance = distanceTo(d), highValue = hv,
+                }
+            end
+        end
+        table.sort(carriers, function(a, b) return a.payout > b.payout end)
     end
 
-    local active = activeFor(src)
-    local activeView
-    if active then
-        local d = GetDealershipById(active.dealershipId)
-        activeView = { id = active.id, label = active.label, dealership = d and d.label or '?', timeLeft = math.max(0, active.deadline - now()) }
+    local h = haulOf(src)
+    local active
+    if h then
+        local d = GetDealershipById(h.dealershipId)
+        active = {
+            kind = h.kind, label = h.kind == 'carrier' and ('%d vehicles'):format(#h.shipments) or h.shipments[1].label,
+            dealership = d and d.label or '?', timeLeft = math.max(0, h.deadline - now()), insured = h.insured, payout = h.payout,
+        }
     end
-    return { ok = true, depot = L.depot.label, shipments = list, active = activeView }
-end)
-
-RegisterCallback('logistics:accept', function(src, id)
-    local sh = Shipments[tonumber(id)]
-    if not sh or sh.status ~= 'waiting' then return { ok = false, error = 'That shipment was already taken.' } end
-    if not canHaul(src, sh) then return { ok = false, error = T('no_permission') } end
-    if not IsNear(src, depotPoint(), 15.0) then return { ok = false, error = T('too_far') } end
-    if activeFor(src) then return { ok = false, error = 'Finish your current delivery first.' } end
-
-    local d = GetDealershipById(sh.dealershipId)
-    if not d then return { ok = false, error = T('vehicle_not_found') } end
-
-    sh.status = 'transit'
-    sh.driver = src
-    sh.driverIdent = Bridge.GetIdentifier(src) or ''
-    sh.driverName = Bridge.GetName(src)
-    sh.plate = (L.platePrefix .. tostring(math.random(100, 999))):sub(1, 8)
-    sh.deadline = now() + L.timeLimit
-    sh.netId = nil
-    persist(sh)
-    IssuePlate(src, sh.plate)
 
     return {
-        ok = true, id = sh.id, model = sh.model, label = sh.label, plate = sh.plate,
-        dealership = d.label, drop = dropPoint(d), timeLimit = L.timeLimit, payout = sh.fee,
+        ok = true, depot = L.depot.label, canTake = driver or #singles > 0,
+        job = L.job, shipments = singles, carriers = carriers, active = active,
+        insurance = L.insurance, company = Company.Public(src),
+    }
+end
+
+RegisterCallback('logistics:board', function(src) return Logistics.Board(src) end)
+
+-- ---------------------------------------------------------------------------
+-- Taking, delivering & cancelling hauls
+-- ---------------------------------------------------------------------------
+
+RegisterCallback('logistics:accept', function(src, req)
+    req = type(req) == 'table' and req or {}
+    if not Logistics.Enabled() then return { ok = false, error = 'Logistics are disabled.' } end
+    if not IsNear(src, depotPoint(), 15.0) then return { ok = false, error = T('too_far') } end
+    if haulOf(src) then return { ok = false, error = 'Finish your current delivery first.' } end
+
+    local kind = req.kind == 'carrier' and 'carrier' or 'single'
+    local cargo = {}
+    if kind == 'carrier' then
+        if not L.carrier.enabled then return { ok = false, error = 'Carrier jobs are disabled.' } end
+        local dId = tonumber(req.dealershipId)
+        for _, sh in pairs(Shipments) do
+            if sh.status == 'waiting' and sh.dealershipId == dId and canHaul(src, sh) then cargo[#cargo + 1] = sh end
+        end
+        table.sort(cargo, function(a, b) return a.id < b.id end)
+        while #cargo > L.carrier.capacity do table.remove(cargo) end
+        if #cargo < L.carrier.minLoad then return { ok = false, error = 'Not enough cargo left for a carrier job.' } end
+    else
+        local sh = Shipments[tonumber(req.id)]
+        if not sh or sh.status ~= 'waiting' then return { ok = false, error = 'That shipment was already taken.' } end
+        if not canHaul(src, sh) then return { ok = false, error = T('no_permission') } end
+        cargo = { sh }
+    end
+
+    local d = GetDealershipById(cargo[1].dealershipId)
+    if not d then return { ok = false, error = T('vehicle_not_found') } end
+
+    local payout, highValue = 0, false
+    for _, sh in ipairs(cargo) do
+        payout = payout + shipmentPay(sh)
+        highValue = highValue or isHighValue(sh)
+    end
+    if kind == 'carrier' then payout = math.floor(payout * L.carrier.bonus) end
+
+    local hz = L.hijack
+    local chance = hz.chance
+    if highValue then chance = math.max(chance, hz.highValueChance) end
+    if kind == 'carrier' then chance = math.max(chance, hz.carrierChance) end
+
+    nextHaulId = nextHaulId + 1
+    local h = {
+        id = nextHaulId, kind = kind, driver = src,
+        driverIdent = Bridge.GetIdentifier(src) or '', driverName = Bridge.GetName(src),
+        shipments = cargo, dealershipId = d.id,
+        plate = (L.platePrefix .. tostring(math.random(100, 999))):sub(1, 8),
+        deadline = now() + math.floor(L.timeLimit * (kind == 'carrier' and L.carrier.timeMultiplier or 1)),
+        insured = req.insured == true, payout = payout,
+        hijack = hz.enabled and math.random() < chance,
+    }
+    for _, sh in ipairs(cargo) do
+        sh.status, sh.haulId, sh.driverIdent = 'transit', h.id, h.driverIdent
+        persist(sh)
+    end
+    Hauls[h.id] = h
+    IssuePlate(src, h.plate)
+
+    return {
+        ok = true, id = h.id, kind = kind,
+        model = kind == 'carrier' and L.carrier.truck or cargo[1].model,
+        trailer = kind == 'carrier' and L.carrier.trailer or nil,
+        label = kind == 'carrier' and ('%d vehicles'):format(#cargo) or cargo[1].label,
+        plate = h.plate, dealership = d.label, drop = dropPoint(d),
+        timeLimit = h.deadline - now(), payout = payout, insured = h.insured,
+        dropRadius = kind == 'carrier' and L.carrier.dropRadius or L.dropRadius,
+        hijack = h.hijack and {
+            delay = math.random(hz.delay[1], hz.delay[2]), vehicle = hz.vehicle, peds = hz.peds, weapon = hz.weapon,
+        } or nil,
     }
 end)
 
-RegisterNetEvent('gen_dealership:logistics:spawned', function(id, netId)
-    local src = source
-    local sh = Shipments[tonumber(id)]
-    if sh and sh.status == 'transit' and sh.driver == src and not sh.netId then
-        sh.netId = tonumber(netId)
+RegisterNetEvent('gen_dealership:logistics:spawned', function(haulId, vehicleNet, trailerNet)
+    local h = Hauls[tonumber(haulId)]
+    if h and h.driver == source and not h.vehicleNet then
+        h.vehicleNet = tonumber(vehicleNet)
+        h.trailerNet = tonumber(trailerNet)
     end
 end)
 
-RegisterCallback('logistics:deliver', function(src, id)
-    local sh = Shipments[tonumber(id)]
-    if not sh or sh.status ~= 'transit' or sh.driver ~= src then return { ok = false, error = 'You are not hauling that shipment.' } end
-    local d = GetDealershipById(sh.dealershipId)
-    if not d then return { ok = false, error = T('vehicle_not_found') } end
-    local drop = dropPoint(d)
-
-    local veh = sh.netId and NetworkGetEntityFromNetworkId(sh.netId) or 0
-    if not veh or veh == 0 or not DoesEntityExist(veh) then return { ok = false, error = 'The shipment vehicle is missing.' } end
-
-    local dropVec = vector3(drop.x, drop.y, drop.z)
-    if #(GetEntityCoords(veh) - dropVec) > L.dropRadius + 2.0 then return { ok = false, error = 'Park the vehicle on the drop-off marker.' } end
-    if GetVehiclePedIsIn(GetPlayerPed(src), false) ~= veh then return { ok = false, error = 'You must be driving the shipment vehicle.' } end
-    local plate = (GetVehicleNumberPlateText(veh) or ''):gsub('^%s+', ''):gsub('%s+$', '')
-    if plate ~= sh.plate then return { ok = false, error = 'That is not the shipment vehicle.' } end
-
-    -- Condition: worst of body / engine health (both 0-1000)
+local function conditionOf(veh)
     local body = GetVehicleBodyHealth(veh) or 1000.0
     local engine = GetVehicleEngineHealth(veh) or 1000.0
-    local condition = math.max(0.0, math.min(1.0, math.min(body, engine) / 1000.0))
-    local ratio = math.max(L.minPayoutRatio, condition)
-    local payout = math.floor(sh.fee * ratio)
-    local refund = sh.fee - payout
+    return math.max(0.0, math.min(1.0, math.min(body, engine) / 1000.0))
+end
 
-    DeleteEntity(veh)
-    sh.payout = payout
-    Bridge.AddMoney(src, 'bank', payout, 'logistics-delivery')
-    if refund > 0 then
-        Biz.AddBalance(sh.dealershipId, refund, 'refund', ('Freight damage refund: %s (%d%% condition)'):format(sh.label, math.floor(condition * 100)), 'System')
+RegisterCallback('logistics:deliver', function(src)
+    local h = haulOf(src)
+    if not h then return { ok = false, error = 'You have no active delivery.' } end
+    local d = GetDealershipById(h.dealershipId)
+    if not d then return { ok = false, error = T('vehicle_not_found') } end
+    local drop = dropPoint(d)
+    local radius = h.kind == 'carrier' and L.carrier.dropRadius or L.dropRadius
+
+    local veh = entityOf(h.vehicleNet)
+    if not veh then return { ok = false, error = 'The shipment vehicle is missing.' } end
+    if #(GetEntityCoords(veh) - vector3(drop.x, drop.y, drop.z)) > radius + 2.0 then return { ok = false, error = 'Park on the drop-off marker.' } end
+    if GetVehiclePedIsIn(GetPlayerPed(src), false) ~= veh then return { ok = false, error = 'You must be driving the shipment vehicle.' } end
+    local plate = (GetVehicleNumberPlateText(veh) or ''):gsub('^%s+', ''):gsub('%s+$', '')
+    if plate ~= h.plate then return { ok = false, error = 'That is not the shipment vehicle.' } end
+
+    local condition = conditionOf(veh)
+    local trailer
+    if h.kind == 'carrier' then
+        trailer = entityOf(h.trailerNet)
+        if not trailer or #(GetEntityCoords(trailer) - GetEntityCoords(veh)) > 25.0 then
+            return { ok = false, error = 'Bring the trailer with you.' }
+        end
+        condition = math.min(condition, conditionOf(trailer))
     end
-    arrive(sh, 'Driver', sh.driverName)
+
+    local ratio = math.max(L.minPayoutRatio, condition)
+    local gross = math.floor(h.payout * ratio)
+    if h.hijack then gross = math.floor(gross * (1 + L.hijack.hazardBonus)) end
+    local premium = h.insured and math.floor(gross * L.insurance.premium) or 0
+    local driverPay, companyCut = Company.Split(gross - premium)
+
+    Hauls[h.id] = nil
+    DeleteEntity(veh)
+    if trailer then DeleteEntity(trailer) end
+
+    Bridge.AddMoney(src, 'bank', driverPay, 'logistics-delivery')
+    Company.Credit(companyCut, ('%s → %s'):format(h.driverName, d.label))
+
+    -- The dealership paid the freight fee up front: refund the damage deduction
+    local refund = 0
+    for _, sh in ipairs(h.shipments) do refund = refund + (sh.fee - math.floor(sh.fee * ratio)) end
+    if refund > 0 then
+        Biz.AddBalance(d.id, refund, 'refund', ('Freight damage refund (%d%% condition)'):format(math.floor(condition * 100)), 'System')
+    end
+    for _, sh in ipairs(h.shipments) do
+        sh.payout = math.floor(driverPay / #h.shipments)
+        arrive(sh, 'Driver', h.driverName)
+    end
+
     Webhooks.Send('logistics', ('Freight delivered · %s'):format(d.label), nil, {
-        Webhooks.Field('Vehicle', sh.label),
+        Webhooks.Field('Cargo', h.kind == 'carrier' and ('%d vehicles (carrier)'):format(#h.shipments) or h.shipments[1].label),
         Webhooks.Field('Driver', Webhooks.Who(src)),
         Webhooks.Field('Condition', ('%d%%'):format(math.floor(condition * 100))),
-        Webhooks.Field('Paid', Utils.FormatMoney(payout)),
+        Webhooks.Field('Paid', Utils.FormatMoney(driverPay)),
+        Webhooks.Field('Company cut', Utils.FormatMoney(companyCut)),
+        Webhooks.Field('Ambushed', h.hijack and 'yes' or 'no'),
     })
 
-    return { ok = true, payout = payout, condition = math.floor(condition * 100), label = sh.label, payoutText = Utils.FormatMoney(payout) }
+    return {
+        ok = true, payout = driverPay, payoutText = Utils.FormatMoney(driverPay), condition = math.floor(condition * 100),
+        label = h.kind == 'carrier' and ('%d vehicles'):format(#h.shipments) or h.shipments[1].label,
+        premium = premium, companyCut = companyCut, hazard = h.hijack,
+    }
 end)
 
 RegisterCallback('logistics:cancel', function(src)
-    local sh = activeFor(src)
-    if not sh then return { ok = false, error = 'You have no active delivery.' } end
-    Logistics.Fail(sh, 'Delivery cancelled.')
+    local h = haulOf(src)
+    if not h then return { ok = false, error = 'You have no active delivery.' } end
+    Logistics.Fail(h, 'Delivery cancelled.', false)
     return { ok = true }
 end)
 
@@ -306,27 +463,38 @@ CreateThread(function()
         Wait(10000)
         if Ready then
             local t = now()
-            for _, sh in pairs(Shipments) do
-                if sh.status == 'transit' then
-                    if not GetPlayerName(sh.driver) then
-                        Logistics.Fail(sh, 'Driver disconnected.')
-                    elseif t > sh.deadline then
-                        Logistics.Fail(sh, "Time's up.")
-                    elseif sh.netId then
-                        local veh = NetworkGetEntityFromNetworkId(sh.netId)
-                        if not veh or veh == 0 or not DoesEntityExist(veh) or GetVehicleEngineHealth(veh) <= -3900.0 then
-                            Logistics.Fail(sh, 'The vehicle was destroyed.')
-                        end
+            local list = {}
+            for _, h in pairs(Hauls) do list[#list + 1] = h end
+            for _, h in ipairs(list) do
+                local ped = GetPlayerName(h.driver) and GetPlayerPed(h.driver)
+                if not ped or ped == 0 then
+                    Logistics.Fail(h, 'Driver disconnected.', false)
+                elseif t > h.deadline then
+                    Logistics.Fail(h, "Time's up.", false)
+                elseif GetEntityHealth(ped) <= 0 then
+                    Logistics.Fail(h, 'You were taken out and the cargo was lost.', true)
+                elseif h.vehicleNet then
+                    local veh = entityOf(h.vehicleNet)
+                    local trailer = h.kind == 'carrier' and entityOf(h.trailerNet) or true
+                    if not veh or GetVehicleEngineHealth(veh) <= -3900.0 or not trailer then
+                        Logistics.Fail(h, 'The cargo was destroyed.', true)
                     end
-                elseif not Logistics.Enabled() or (sh.autoAt > 0 and t >= sh.autoAt) then
-                    arrive(sh, 'NPC freight', 'NPC freight')
                 end
+            end
+
+            local ids = {}
+            for id, sh in pairs(Shipments) do
+                if sh.status == 'waiting' and (not Logistics.Enabled() or (sh.autoAt > 0 and t >= sh.autoAt)) then ids[#ids + 1] = id end
+            end
+            for _, id in ipairs(ids) do
+                local sh = Shipments[id]
+                if sh and sh.status == 'waiting' then arrive(sh, 'NPC freight', 'NPC freight') end
             end
         end
     end
 end)
 
 AddEventHandler('playerDropped', function()
-    local sh = activeFor(source)
-    if sh then Logistics.Fail(sh, 'Driver disconnected.') end
+    local h = haulOf(source)
+    if h then Logistics.Fail(h, 'Driver disconnected.', false) end
 end)

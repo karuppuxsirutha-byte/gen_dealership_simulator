@@ -512,3 +512,13 @@ kbd { display: inline-block; min-width: 18px; padding: 0 4px; margin-right: 2px;
 .campaign { display: flex; flex-direction: column; gap: 6px; }
 .campaign .btn { margin-top: 8px; }
 .input.qty.wide { width: 90px; }
+
+/* ======================= logistics v2 ======================= */
+.inline-tabs { padding: 0; margin: -6px 0 16px; }
+.ins-toggle { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); cursor: pointer; margin-bottom: 12px; }
+.ins-toggle input { margin-top: 3px; }
+.truck-ico { width: 56px; height: 56px; border-radius: 12px; display: grid; place-items: center; font-size: 28px; background: rgba(245, 185, 66, .12); flex-shrink: 0; }
+.truck-ico.big { width: 72px; height: 72px; font-size: 36px; }
+.row-card.carrier { border-color: rgba(245, 185, 66, .35); }
+.company-sale { display: flex; align-items: center; gap: 16px; }
+.inline .input { min-width: 0; }

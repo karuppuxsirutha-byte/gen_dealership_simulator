@@ -182,6 +182,22 @@ local schema = {
         PRIMARY KEY (`dealership_id`, `identifier`, `week`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
 
+    [[CREATE TABLE IF NOT EXISTS `gen_logistics_company` (
+        `id` INT NOT NULL,
+        `owner` VARCHAR(100) NOT NULL DEFAULT '',
+        `owner_name` VARCHAR(100) NOT NULL DEFAULT '',
+        `balance` BIGINT NOT NULL DEFAULT 0,
+        `cut` INT NOT NULL DEFAULT 15,
+        PRIMARY KEY (`id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+
+    [[CREATE TABLE IF NOT EXISTS `gen_logistics_drivers` (
+        `identifier` VARCHAR(100) NOT NULL,
+        `name` VARCHAR(100) NOT NULL,
+        `hired_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (`identifier`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+
     [[CREATE TABLE IF NOT EXISTS `gen_dealership_transactions` (
         `id` INT NOT NULL AUTO_INCREMENT,
         `dealership_id` INT NOT NULL,

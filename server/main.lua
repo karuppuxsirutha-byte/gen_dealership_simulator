@@ -222,6 +222,7 @@ MySQL.ready(function()
     Finance.Load()
     reload()
     Logistics.Load()
+    Company.Load()
     Loaded = true
     broadcast()
     print(('^2[gen_dealership]^0 Loaded %d dealership(s) | framework: %s'):format(#Dealerships, Bridge.Framework))

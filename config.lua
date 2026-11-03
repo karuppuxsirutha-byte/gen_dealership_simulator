@@ -130,6 +130,53 @@ Config.Logistics = {
         },
         blip = { sprite = 477, color = 21, scale = 0.8 },
     },
+
+    -- Car carrier jobs: haul several vehicles for one dealership at once (truck + trailer)
+    carrier = {
+        enabled = true,
+        minLoad = 2,             -- shipments for one dealership needed to offer a carrier job
+        capacity = 4,
+        bonus = 1.15,            -- pay multiplier vs. hauling the same cars one by one
+        truck = 'packer',
+        trailer = 'tr4',         -- car-carrier trailer
+        spawn = nil,             -- vector4 for the truck (nil = first free loading bay); needs ~25 m of space behind
+        dropRadius = 14.0,
+        timeMultiplier = 1.5,    -- carriers get more time
+    },
+
+    -- High-value cargo pays extra (and attracts hijackers)
+    highValue = { threshold = 250000, bonus = 0.5 },
+
+    -- Drivers choose whether to insure their cargo when taking a job
+    insurance = {
+        premium = 0.10,          -- share of pay deducted on delivery when insured
+        payout = 0.25,           -- share of pay received if insured cargo is lost
+        uninsuredPenalty = 0.20, -- share of pay charged if uninsured cargo is lost
+    },
+
+    -- Hijack events: armed NPCs chase the driver
+    hijack = {
+        enabled = true,
+        chance = 0.12,
+        highValueChance = 0.35,
+        carrierChance = 0.25,
+        hazardBonus = 0.25,      -- extra pay when you deliver despite an ambush
+        delay = { 45, 120 },     -- seconds after leaving the depot
+        vehicle = 'cavalcade2',
+        peds = { 'g_m_y_mexgoon_01', 'g_m_y_lost_01', 'g_m_m_chicold_01' },
+        weapon = 'WEAPON_MICROSMG',
+    },
+
+    -- A player-owned logistics company takes a cut of every haul and can hire drivers
+    company = {
+        enabled = true,
+        label = 'Port Logistics Co.',
+        price = 500000,
+        defaultCut = 15,         -- % of each haul's pay that goes to the company
+        maxCut = 40,
+        sellBackRatio = 0.6,
+        maxDrivers = 20,
+    },
 }
 
 -- ===========================================================================
