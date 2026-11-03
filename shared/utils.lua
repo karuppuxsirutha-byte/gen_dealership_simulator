@@ -1,5 +1,8 @@
 Utils = {}
 
+-- Pre-owned listings use shop ids above this offset
+Utils.USED_OFFSET = 1000000
+
 function Utils.T(key, ...)
     local lang = Locales[Config.Locale] or Locales.en
     local str = lang[key] or Locales.en[key] or key

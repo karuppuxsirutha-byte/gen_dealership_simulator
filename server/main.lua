@@ -14,7 +14,10 @@ local issuedPlates = {}   -- [src] = plate the client is allowed to request keys
 
 local function reload()
     Dealerships, ById = DB.LoadAll()
-    for _, d in ipairs(Dealerships) do Biz.Decorate(d) end
+    for _, d in ipairs(Dealerships) do
+        Biz.Decorate(d)
+        UsedLot.Attach(d)
+    end
 end
 
 local function broadcast(target)
@@ -73,7 +76,7 @@ function IsNear(src, point, maxDist)
     return #(c - vector3(point.x, point.y, point.z)) <= maxDist
 end
 
-local function canUse(src, d)
+function CanUseDealership(src, d)
     if not d.job then return true end
     return Bridge.GetJob(src) == d.job
 end
@@ -202,6 +205,7 @@ local function sanitizeDealership(data)
         spawn = spawn,
         testdrive = sanitizeVec4(data.testdrive),
         delivery = sanitizeVec4(data.delivery),
+        preview = sanitizeVec4(data.preview),
         displays = displays,
         vehicles = vehicles,
     }
@@ -214,6 +218,8 @@ end
 MySQL.ready(function()
     DB.Init()
     Biz.Load()
+    UsedLot.Load()
+    Finance.Load()
     reload()
     Logistics.Load()
     Loaded = true
@@ -281,6 +287,7 @@ RegisterCallback('creator:delete', function(src, id)
     if not id or not ById[id] then return { ok = false, error = 'Unknown dealership.' } end
 
     DB.Delete(id)
+    UsedLot.Forget(id)
     Logistics.Forget(id)
     Biz.Forget(id)
     RemoveCustomersFor(id)
@@ -312,60 +319,111 @@ local function validMethod(method)
     return Config.PaymentMethods[1]
 end
 
+--- Normalises custom plate text; nil when invalid.
+function NormalizePlate(text)
+    if type(text) ~= 'string' then return nil end
+    local plate = text:upper():gsub('^%s+', ''):gsub('%s+$', '')
+    if #plate < 2 or #plate > 8 or not plate:match('^[A-Z0-9 ]+$') then return nil end
+    return plate
+end
+
+local validColors = {}
+for _, c in ipairs(Config.Colors or {}) do validColors[c.id] = true end
+
+--- Purchase options from the UI → safe vehicle props
+local function sanitizeProps(options)
+    local props = {}
+    local c1, c2 = tonumber(options.color1), tonumber(options.color2)
+    if c1 and validColors[c1] then props.color1 = c1 end
+    if c2 and validColors[c2] then props.color2 = c2 end
+    if props.color1 and not props.color2 then props.color2 = props.color1 end
+    return next(props) and props or nil
+end
+
 --- Charges the buyer, registers the vehicle, updates stock and routes revenue.
 --- Used by the self-service shop and by staff offers.
---- @param opts table|nil { seller = src, sellerName, sellerIdentifier, kind }
+--- @param opts table|nil { seller, sellerName, sellerIdentifier, kind, props, plate, finance, used }
 function ProcessSale(buyer, d, v, method, price, opts)
     opts = opts or {}
     method = validMethod(method)
-    if v.stock == 0 then return { ok = false, error = T('out_of_stock') } end
+    local used = opts.used
+    if not used and v.stock == 0 then return { ok = false, error = T('out_of_stock') } end
     if purchaseLock[buyer] then return { ok = false, error = T('busy') } end
     purchaseLock[buyer] = true
-
-    local plate = generatePlate()
-    if not plate then
+    local function fail(err)
         purchaseLock[buyer] = nil
-        return { ok = false, error = T('purchase_failed') }
-    end
-    if v.stock == 0 then -- sold out while the plate was generated
-        purchaseLock[buyer] = nil
-        return { ok = false, error = T('out_of_stock') }
+        return { ok = false, error = err }
     end
 
-    if not Bridge.RemoveMoney(buyer, method, price, ('vehicle-purchase:%s'):format(v.model)) then
-        purchaseLock[buyer] = nil
-        return { ok = false, error = T('not_enough_money') }
+    -- Plate: custom (paid extra) or generated
+    local plate, plateFee = nil, 0
+    if opts.plate and opts.plate ~= '' then
+        if not Config.CustomPlate.enabled then return fail(T('plate_disabled')) end
+        plate = NormalizePlate(opts.plate)
+        if not plate then return fail(T('plate_invalid')) end
+        if Bridge.PlateExists(plate) then return fail(T('plate_taken')) end
+        plateFee = Config.CustomPlate.price
+    else
+        plate = generatePlate()
+        if not plate then return fail(T('purchase_failed')) end
+    end
+
+    -- re-check availability after the yields above
+    if not used and v.stock == 0 then return fail(T('out_of_stock')) end
+    if used and used.taken then return fail(T('vehicle_not_found')) end
+
+    -- Financing: deposit now (bank only), instalments later
+    local plan
+    if opts.finance then
+        local err
+        plan, err = Finance.Plan(price, opts.finance)
+        if not plan then return fail(err) end
+        method = 'bank'
+    end
+    local upfront = (plan and plan.deposit or price) + plateFee
+
+    if not Bridge.RemoveMoney(buyer, method, upfront, ('vehicle-purchase:%s'):format(v.model)) then
+        return fail(T('not_enough_money'))
     end
 
     -- reserve the unit before any further yield
-    local reserved = v.stock > 0
+    local reserved = not used and v.stock > 0
     if reserved then v.stock = v.stock - 1 end
+    if used then UsedLot.Take(used) end
 
-    local ok, given = pcall(Bridge.GiveVehicle, buyer, v.model, plate, d.name)
+    local ok, given = pcall(Bridge.GiveVehicle, buyer, v.model, plate, d.name, opts.props)
     if not ok or not given then
         if not ok then print(('^1[gen_dealership] GiveVehicle failed: %s^0'):format(given)) end
-        Bridge.AddMoney(buyer, method, price, 'vehicle-purchase-refund')
+        Bridge.AddMoney(buyer, method, upfront, 'vehicle-purchase-refund')
         if reserved then v.stock = v.stock + 1 end
-        purchaseLock[buyer] = nil
-        return { ok = false, error = T('purchase_failed') }
+        if used then UsedLot.Restore(used) end
+        return fail(T('purchase_failed'))
     end
     if reserved then DB.SetStock(v.id, v.stock) end
+    if used then UsedLot.Finalize(used) end
 
     local commission = 0
     if Biz.IsOwned(d.id) then
-        Biz.AddBalance(d.id, price, 'sale', ('%s sold to %s'):format(v.label, Bridge.GetName(buyer)), opts.sellerName or 'Self-service')
+        local received = plan and plan.deposit or price
+        Biz.AddBalance(d.id, received, 'sale',
+            ('%s%s sold to %s%s'):format(used and 'Pre-owned ' or '', v.label, Bridge.GetName(buyer), plan and ' (financed)' or ''),
+            opts.sellerName or 'Self-service')
         if opts.seller then commission = Biz.PayCommission(d.id, opts.seller, price, v.label) end
+        if OnStaffSale and opts.sellerIdentifier and opts.sellerIdentifier ~= '' then OnStaffSale(d, opts.sellerIdentifier) end
     end
+    if plan then Finance.Create(buyer, d, v, plate, plan) end
 
-    DB.LogSale(d.name, Bridge.GetIdentifier(buyer), v.model, plate, price, method, opts.sellerIdentifier, opts.kind or 'shop')
+    DB.LogSale(d.name, Bridge.GetIdentifier(buyer), v.model, plate, price, plan and 'finance' or method, opts.sellerIdentifier, opts.kind or 'shop')
     Webhooks.Send('sales', ('Vehicle sold · %s'):format(d.label), nil, {
-        Webhooks.Field('Vehicle', ('%s (`%s`)'):format(v.label, v.model)),
+        Webhooks.Field('Vehicle', ('%s%s (`%s`)'):format(used and 'Pre-owned ' or '', v.label, v.model)),
         Webhooks.Field('Price', Utils.FormatMoney(price)),
-        Webhooks.Field('Plate', plate),
+        Webhooks.Field('Plate', plate .. (plateFee > 0 and ' (custom)' or '')),
         Webhooks.Field('Buyer', Webhooks.Who(buyer)),
-        Webhooks.Field('Payment', method),
+        Webhooks.Field('Payment', plan and ('Financed · deposit %s'):format(Utils.FormatMoney(plan.deposit)) or method),
         Webhooks.Field('Sold by', opts.sellerName or 'Self-service'),
     }, 'good')
+    if GiveRegistrationPapers then GiveRegistrationPapers(buyer, d, v, plate, plan) end
+
     issuedPlates[buyer] = plate
     purchaseLock[buyer] = nil
     if reserved then broadcast() end
@@ -376,26 +434,50 @@ function ProcessSale(buyer, d, v, method, price, opts)
         model = v.model,
         label = v.label,
         price = price,
-        priceText = Utils.FormatMoney(price),
+        priceText = plan and ('%s deposit'):format(Utils.FormatMoney(plan.deposit)) or Utils.FormatMoney(price),
         commission = commission,
+        props = opts.props,
+        condition = used and used.condition or nil,
+        financed = plan ~= nil,
     }
 end
+
+--- Resolves a shop vehicle id (catalogue or pre-owned) → vehicle table, price, used entry
+local function resolveShopVehicle(d, vehicleId)
+    local id = tonumber(vehicleId) or 0
+    if id >= Utils.USED_OFFSET then
+        local used = UsedLot.Find(d.id, id - Utils.USED_OFFSET)
+        if not used then return nil end
+        return { id = id, model = used.model, label = used.label, stock = 1 }, used.price, used
+    end
+    local v = FindVehicle(d, id)
+    if not v then return nil end
+    return v, v.price, nil
+end
+ResolveShopVehicle = resolveShopVehicle
 
 -- ---------------------------------------------------------------------------
 -- Shop
 -- ---------------------------------------------------------------------------
 
-RegisterCallback('shop:buy', function(src, dealershipId, vehicleId, method)
+RegisterCallback('shop:buy', function(src, dealershipId, vehicleId, method, options)
+    options = type(options) == 'table' and options or {}
     local d = ById[tonumber(dealershipId)]
     if not d then return { ok = false, error = T('vehicle_not_found') } end
-    if not canUse(src, d) then return { ok = false, error = T('no_access') } end
+    if not CanUseDealership(src, d) then return { ok = false, error = T('no_access') } end
     if not IsNear(src, d.shop, Config.PurchaseDistance) then return { ok = false, error = T('too_far') } end
     if Biz.IsOwned(d.id) and not Config.Simulation.selfService then return { ok = false, error = T('staff_only') } end
 
-    local v = FindVehicle(d, vehicleId)
+    local v, price, used = resolveShopVehicle(d, vehicleId)
     if not v then return { ok = false, error = T('vehicle_not_found') } end
 
-    return ProcessSale(src, d, v, method, v.price, { kind = 'shop' })
+    return ProcessSale(src, d, v, method, price, {
+        kind = used and 'used' or 'shop',
+        props = sanitizeProps(options),
+        plate = type(options.plate) == 'string' and options.plate or nil,
+        finance = type(options.finance) == 'table' and options.finance or nil,
+        used = used,
+    })
 end)
 
 -- ---------------------------------------------------------------------------
@@ -436,10 +518,10 @@ RegisterCallback('shop:testdrive', function(src, dealershipId, vehicleId)
 
     local d = ById[tonumber(dealershipId)]
     if not d then return { ok = false, error = T('vehicle_not_found') } end
-    if not canUse(src, d) then return { ok = false, error = T('no_access') } end
+    if not CanUseDealership(src, d) then return { ok = false, error = T('no_access') } end
     if not nearDealership(src, d) then return { ok = false, error = T('too_far') } end
 
-    local v = FindVehicle(d, vehicleId)
+    local v = resolveShopVehicle(d, vehicleId)
     if not v then return { ok = false, error = T('vehicle_not_found') } end
 
     local now = os.time()

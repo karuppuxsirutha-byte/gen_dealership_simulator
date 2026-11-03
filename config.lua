@@ -125,6 +125,65 @@ Config.Logistics = {
     },
 }
 
+-- ===========================================================================
+-- Buying experience
+-- ===========================================================================
+
+-- 3D preview: the car is shown at the dealership's "preview" point (creator → Locations),
+-- falling back to the delivery spawn. It is a local entity only the viewer sees.
+Config.Preview = { enabled = true }
+
+-- Paint colours offered in the preview (GTA colour index, label, swatch colour for the UI)
+Config.Colors = {
+    { id = 0,   label = 'Black',        hex = '#0d1116' },
+    { id = 12,  label = 'Matte Black',  hex = '#13181f' },
+    { id = 1,   label = 'Graphite',     hex = '#1c1d21' },
+    { id = 4,   label = 'Silver',       hex = '#9ca1a3' },
+    { id = 111, label = 'Frost White',  hex = '#f0f0f0' },
+    { id = 27,  label = 'Red',          hex = '#c00e1a' },
+    { id = 38,  label = 'Orange',       hex = '#f78616' },
+    { id = 89,  label = 'Race Yellow',  hex = '#f5d20f' },
+    { id = 92,  label = 'Lime',         hex = '#66b81f' },
+    { id = 50,  label = 'Racing Green', hex = '#122e2b' },
+    { id = 64,  label = 'Blue',         hex = '#2354a1' },
+    { id = 70,  label = 'Ultra Blue',   hex = '#2446a8' },
+    { id = 145, label = 'Purple',       hex = '#621276' },
+    { id = 135, label = 'Hot Pink',     hex = '#f21f99' },
+    { id = 90,  label = 'Bronze',       hex = '#9c6a3f' },
+}
+
+-- Custom plate text at purchase (2-8 characters, A-Z 0-9 and spaces)
+Config.CustomPlate = { enabled = true, price = 5000 }
+
+-- Financing: pay a deposit now, the rest in instalments taken from the bank
+Config.Finance = {
+    enabled = true,
+    minPrice = 20000,          -- cheaper vehicles must be paid in full
+    minDeposit = 0.2,          -- 20% minimum deposit
+    terms = {
+        { payments = 4,  interest = 0.08 },
+        { payments = 8,  interest = 0.15 },
+        { payments = 12, interest = 0.22 },
+    },
+    interval = 7200,           -- seconds between instalments (collected while the buyer is online)
+    maxMissed = 3,             -- missed payments in a row before repossession
+    command = 'financing',     -- players check / pay off their contracts with /financing
+}
+
+-- Trade-ins: sell your owned car to a dealership (it becomes a pre-owned listing)
+Config.TradeIn = {
+    enabled = true,
+    ratio = 0.5,               -- of the catalogue price, scaled by condition
+    radius = 25.0,             -- the car must be this close to the catalogue point
+}
+
+-- Pre-owned lot: trade-ins and repossessions are resold
+Config.UsedLot = {
+    enabled = true,
+    markup = 1.3,              -- listing price = trade-in value * markup
+    maxPerDealership = 25,
+}
+
 -- UI look & feel
 Config.UI = {
     accent = '#3d8bff',   -- any #rrggbb colour

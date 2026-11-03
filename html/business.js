@@ -7,7 +7,7 @@ const ROLE_NAMES = { owner: 'Owner', manager: 'Manager', sales: 'Salesperson' };
 const TX_LABEL = {
   sale: 'Sale', npc_sale: 'Walk-in sale', order: 'Stock order', commission: 'Commission', deposit: 'Deposit',
   withdraw: 'Withdrawal', upkeep: 'Upkeep', refund: 'Refund', delivery: 'Delivery', staff: 'Staff', price: 'Pricing', ownership: 'Ownership',
-  freight: 'Freight',
+  freight: 'Freight', tradein: 'Trade-in', finance: 'Finance',
 };
 
 const B = { data: null, tab: 'overview', nearby: [], receivedAt: 0 };
@@ -45,6 +45,7 @@ function setManageData(data) {
   B.data.employees = arr(data.employees);
   B.data.orders = arr(data.orders);
   B.data.transactions = arr(data.transactions);
+  B.data.used = arr(data.used);
   B.data.stats.daily = arr(data.stats.daily);
   B.receivedAt = Date.now();
   renderManage();
@@ -188,10 +189,32 @@ function paneInventory(d) {
       </table>
     </div>
     <h3 class="section-title">Incoming deliveries</h3>
-    <div class="card-box">${orders}</div>`;
+    <div class="card-box">${orders}</div>
+    ${usedTable(d, mgr)}`;
+}
+
+function usedTable(d, mgr) {
+  const used = arr(d.used);
+  if (!used.length) return '';
+  return `<h3 class="section-title">Pre-owned lot</h3>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Vehicle</th><th>Condition</th><th>Source</th><th>Paid</th><th>Price</th></tr></thead>
+      <tbody>${used.map((u) => `<tr data-uid="${u.id}">
+        <td><div class="row-title">${esc(u.label)}</div><div class="muted small mono">${esc(u.model)}</div></td>
+        <td>${u.condition}%</td>
+        <td><span class="chip">${u.source === 'repo' ? 'Repossession' : 'Trade-in'}</span></td>
+        <td>${fmtMoney(u.value)}</td>
+        <td>${mgr ? `<input class="input sm" type="number" data-uprice min="100" value="${u.price}">` : fmtMoney(u.price)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
 }
 
 $('#b-pane').addEventListener('change', (e) => {
+  const usedInput = e.target.closest('[data-uprice]');
+  if (usedInput) {
+    bizAction('setUsedPrice', { id: Number(usedInput.closest('[data-uid]').dataset.uid), price: Number(usedInput.value) });
+    return;
+  }
   const priceInput = e.target.closest('[data-price]');
   if (priceInput) {
     const vid = Number(priceInput.closest('[data-vid]').dataset.vid);

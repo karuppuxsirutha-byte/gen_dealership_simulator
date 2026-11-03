@@ -11,6 +11,7 @@ local schema = {
         `spawn` LONGTEXT NULL,
         `testdrive` LONGTEXT NULL,
         `delivery` LONGTEXT NULL,
+        `preview` LONGTEXT NULL,
         `displays` LONGTEXT NULL,
         `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (`id`),
@@ -117,6 +118,44 @@ local schema = {
         CONSTRAINT `fk_gen_dealership_shipments` FOREIGN KEY (`dealership_id`) REFERENCES `gen_dealerships` (`id`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
 
+    [[CREATE TABLE IF NOT EXISTS `gen_dealership_used` (
+        `id` INT NOT NULL AUTO_INCREMENT,
+        `dealership_id` INT NOT NULL,
+        `model` VARCHAR(32) NOT NULL,
+        `label` VARCHAR(100) NOT NULL,
+        `category` VARCHAR(64) NOT NULL DEFAULT 'other',
+        `price` INT NOT NULL,
+        `value` INT NOT NULL DEFAULT 0,
+        `condition` INT NOT NULL DEFAULT 100,
+        `source` VARCHAR(16) NOT NULL DEFAULT 'tradein',
+        `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (`id`),
+        KEY `dealership_id` (`dealership_id`),
+        CONSTRAINT `fk_gen_dealership_used` FOREIGN KEY (`dealership_id`) REFERENCES `gen_dealerships` (`id`) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+
+    [[CREATE TABLE IF NOT EXISTS `gen_dealership_finance` (
+        `id` INT NOT NULL AUTO_INCREMENT,
+        `identifier` VARCHAR(100) NOT NULL,
+        `owner_name` VARCHAR(100) NOT NULL DEFAULT '',
+        `dealership_id` INT NULL,
+        `dealership` VARCHAR(100) NOT NULL DEFAULT '',
+        `plate` VARCHAR(8) NOT NULL,
+        `model` VARCHAR(32) NOT NULL,
+        `label` VARCHAR(100) NOT NULL,
+        `total` INT NOT NULL,
+        `remaining` INT NOT NULL,
+        `payment` INT NOT NULL,
+        `payments_left` INT NOT NULL,
+        `next_due` INT NOT NULL,
+        `missed` INT NOT NULL DEFAULT 0,
+        `status` VARCHAR(16) NOT NULL DEFAULT 'active',
+        `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (`id`),
+        KEY `identifier` (`identifier`),
+        KEY `status` (`status`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+
     [[CREATE TABLE IF NOT EXISTS `gen_dealership_transactions` (
         `id` INT NOT NULL AUTO_INCREMENT,
         `dealership_id` INT NOT NULL,
@@ -134,6 +173,7 @@ local schema = {
 -- Columns added after the first release (for databases created by older versions)
 local migrations = {
     { 'gen_dealerships', 'delivery', 'LONGTEXT NULL AFTER `testdrive`' },
+    { 'gen_dealerships', 'preview', 'LONGTEXT NULL AFTER `delivery`' },
     { 'gen_dealership_vehicles', 'cost', 'INT NOT NULL DEFAULT 0 AFTER `price`' },
     { 'gen_dealership_sales', 'seller', "VARCHAR(100) NOT NULL DEFAULT '' AFTER `payment`" },
     { 'gen_dealership_sales', 'kind', "VARCHAR(16) NOT NULL DEFAULT 'shop' AFTER `seller`" },
@@ -189,6 +229,7 @@ function DB.LoadAll()
             spawn = decode(r.spawn, nil),
             testdrive = decode(r.testdrive, nil),
             delivery = decode(r.delivery, nil),
+            preview = decode(r.preview, nil),
             displays = decode(r.displays, {}),
             vehicles = {},
         }
@@ -221,19 +262,19 @@ end
 function DB.Save(d, keepBusinessFields)
     local params = {
         d.name, d.label, d.job or '', encode(d.blip),
-        encode(d.shop), encode(d.spawn), encode(d.testdrive), encode(d.delivery), encode(d.displays),
+        encode(d.shop), encode(d.spawn), encode(d.testdrive), encode(d.delivery), encode(d.preview), encode(d.displays),
     }
 
     local id = d.id
     if id then
         params[#params + 1] = id
         MySQL.update.await(
-            'UPDATE gen_dealerships SET name = ?, label = ?, job = ?, blip = ?, shop = ?, spawn = ?, testdrive = ?, delivery = ?, displays = ? WHERE id = ?',
+            'UPDATE gen_dealerships SET name = ?, label = ?, job = ?, blip = ?, shop = ?, spawn = ?, testdrive = ?, delivery = ?, preview = ?, displays = ? WHERE id = ?',
             params
         )
     else
         id = MySQL.insert.await(
-            'INSERT INTO gen_dealerships (name, label, job, blip, shop, spawn, testdrive, delivery, displays) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO gen_dealerships (name, label, job, blip, shop, spawn, testdrive, delivery, preview, displays) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             params
         )
     end

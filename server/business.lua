@@ -413,6 +413,7 @@ function Biz.Snapshot(src, id)
         ownerName = s.ownerName, balance = s.balance, reputation = s.reputation,
         myCommission = me and me.commission or 0,
         vehicles = vehicles, employees = employees, orders = orders,
+        used = UsedLot.ListFull(id),
         transactions = transactions,
         stats = salesStats(id, s.ownerSince or 0),
         customers = CountCustomers and CountCustomers(id) or 0,
@@ -454,6 +455,17 @@ Actions.setPrice = { min = 'manager', run = function(src, d, s, p)
     DB.SetPrice(v.id, price)
     Biz.Log(d.id, 'price', 0, ('%s price set to %s'):format(v.label, Utils.FormatMoney(price)), Bridge.GetName(src))
     BroadcastDealerships()
+    return { ok = true }
+end }
+
+Actions.setUsedPrice = { min = 'manager', run = function(src, d, s, p)
+    local entry = UsedLot.Find(d.id, p.id)
+    if not entry then return { ok = false, error = T('vehicle_not_found') } end
+    local max = math.max(1000, entry.value * 3)
+    local price = clampInt(p.price, 100, max)
+    if not price then return { ok = false, error = ('Price must be between %s and %s.'):format(Utils.FormatMoney(100), Utils.FormatMoney(max)) } end
+    UsedLot.SetPrice(d.id, entry.id, price)
+    Biz.Log(d.id, 'price', 0, ('Pre-owned %s price set to %s'):format(entry.label, Utils.FormatMoney(price)), Bridge.GetName(src))
     return { ok = true }
 end }
 

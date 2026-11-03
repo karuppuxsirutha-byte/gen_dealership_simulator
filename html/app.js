@@ -94,6 +94,7 @@ const S = {
   limits: { maxDisplays: 30, maxVehicles: 250 },
   creator: { open: false, list: [], current: null, dirty: false, tab: 'general', filter: '' },
   shop: null,
+  features: {},
 };
 
 function setCategories(list) {
@@ -112,6 +113,7 @@ function normalizeDealership(d) {
   d.spawn = d.spawn || null;
   d.testdrive = d.testdrive || null;
   d.delivery = d.delivery || null;
+  d.preview = d.preview || null;
   d.business = Object.assign({ owned: false, ownerName: '', price: 0 }, d.business || {});
   return d;
 }
@@ -144,6 +146,7 @@ const LOCATIONS = [
   { key: 'shop', title: 'Catalogue point', desc: 'Players press E here to browse. The map blip is placed here too.', required: true, vehicle: false },
   { key: 'spawn', title: 'Delivery spawn', desc: 'Where purchased vehicles are delivered.', required: true, vehicle: true },
   { key: 'testdrive', title: 'Test drive spawn', desc: 'Optional. Falls back to the delivery spawn.', required: false, vehicle: true },
+  { key: 'preview', title: '3D preview stage', desc: 'Optional. Where the shop shows the rotating preview car (only the viewer sees it). Falls back to the delivery spawn.', required: false, vehicle: true },
   { key: 'delivery', title: 'Stock drop-off', desc: 'Optional. Logistics drivers park ordered stock here. Falls back to the delivery spawn.', required: false, vehicle: true },
 ];
 
@@ -612,7 +615,11 @@ function openShop(data) {
     sort: 'featured',
     selected: null,
     busy: false,
+    opts: { color1: null, color2: null, plate: '', finance: false, term: 1, deposit: 0.2 },
   };
+  S.features = data.features || {};
+  if (S.features.finance) S.shop.opts.deposit = S.features.finance.minDeposit;
+  $('#s-trade').classList.toggle('hidden', !S.features.tradeIn);
   const biz = data.dealership.business || {};
   $('#s-title').textContent = data.dealership.label;
   $('#s-eyebrow').textContent = biz.owned ? `Owned by ${biz.ownerName}` : 'Official dealer';
@@ -660,7 +667,7 @@ function filteredVehicles() {
   return sorter ? list.slice().sort(sorter) : list;
 }
 
-const stockBadge = (v) => (v.stock < 0 ? '' : v.stock === 0
+const stockBadge = (v) => (v.used ? `<span class="chip used stock">Pre-owned · ${v.condition}%</span>` : v.stock < 0 ? '' : v.stock === 0
   ? '<span class="chip warn stock">Sold out</span>'
   : `<span class="chip ${v.stock <= 2 ? 'hot' : ''} stock">${v.stock <= 2 ? `Only ${v.stock} left` : `${v.stock} in stock`}</span>`);
 
@@ -699,6 +706,7 @@ async function loadStats(model) {
 }
 
 function selectVehicle(id, render = true) {
+  if (S.shop.selected !== id) Object.assign(S.shop.opts, { color1: null, color2: null, finance: false });
   S.shop.selected = id;
   const v = S.shop.vehicles.find((x) => x.id === id);
   if (v) loadStats(v.model);
@@ -733,25 +741,49 @@ function statBars(model) {
   ${st.seats ? `<div class="chips"><span class="chip">${st.seats} seat${st.seats === 1 ? '' : 's'}</span></div>` : ''}`;
 }
 
+const selectedVehicle = () => S.shop && S.shop.vehicles.find((x) => x.id === S.shop.selected);
+const colorInfo = (id) => arr(S.features.colors).find((c) => c.id === id) || { label: '?', hex: '#888' };
+const swatch = (id) => `<i class="dot-swatch" style="background:${esc(colorInfo(id).hex)}"></i>`;
+const canFinance = (v) => !!(S.features.finance && v.price >= S.features.finance.minPrice);
+
+function planFor(v) {
+  const f = S.features.finance;
+  if (!S.shop.opts.finance || !f || !canFinance(v)) return null;
+  const terms = arr(f.terms);
+  const term = terms[S.shop.opts.term - 1] || terms[0];
+  const ratio = Math.max(f.minDeposit, Math.min(0.9, S.shop.opts.deposit));
+  const deposit = Math.ceil(v.price * ratio);
+  const total = Math.floor((v.price - deposit) * (1 + term.interest));
+  return { deposit, total, payments: term.payments, payment: Math.ceil(total / term.payments), interest: term.interest };
+}
+function plateFee() {
+  const cp = S.features.customPlate;
+  return cp && cp.enabled && S.shop.opts.plate.trim() ? cp.price : 0;
+}
+function upfrontFor(v) {
+  const plan = planFor(v);
+  return (plan ? plan.deposit : v.price) + plateFee();
+}
+
 function renderShopDetails() {
   const el = $('#s-details');
-  const v = S.shop.vehicles.find((x) => x.id === S.shop.selected);
+  const v = selectedVehicle();
   if (!v) {
     el.innerHTML = '<div class="empty"><div class="empty-icon">🔑</div><p>Select a vehicle to see details.</p></div>';
     return;
   }
   const b = S.shop.balance;
+  const o = S.shop.opts;
+  const f = S.features;
   const soldOut = v.stock === 0;
-  const bal = b[S.shop.method];
-  const affordable = bal == null || bal >= v.price;
   const selfService = S.shop.dealership.selfService;
-
-  let buyLabel = `Buy for ${fmtMoney(v.price)}`;
-  if (soldOut) buyLabel = 'Sold out';
-  else if (!affordable) buyLabel = S.shop.method === 'cash' ? 'Not enough cash' : 'Not enough money in the bank';
+  const plan = planFor(v);
+  if (plan) S.shop.method = 'bank';
+  const methods = plan ? [] : S.shop.payment;
+  const terms = arr(f.finance && f.finance.terms);
 
   el.innerHTML = `
-    <div class="stage">${thumb(v.model)}</div>
+    <div class="stage">${thumb(v.model)}${f.preview ? '<button class="stage-btn" data-act="preview">⟳ 3D view &amp; paint</button>' : ''}</div>
     <div>
       <div class="chips"><span class="chip">${esc(S.catLabel[v.category] || v.category)}</span>${stockBadge(v).replace(' stock', '') || '<span class="chip good">In stock</span>'}</div>
       <h2>${esc(v.label)}</h2>
@@ -759,17 +791,62 @@ function renderShopDetails() {
     </div>
     <div class="big-price">${fmtMoney(v.price)}</div>
     ${statBars(v.model)}
-    ${selfService && S.shop.payment.length > 1 ? `<div class="seg">${S.shop.payment.map((m) => `
+    ${selfService && !soldOut ? `
+    <div class="opt-group">
+      ${o.color1 != null ? `<div class="opt-row"><span>Paint</span><span class="paint">${swatch(o.color1)}${esc(colorInfo(o.color1).label)}${o.color2 != null && o.color2 !== o.color1 ? ` / ${swatch(o.color2)}${esc(colorInfo(o.color2).label)}` : ''}</span></div>` : ''}
+      ${canFinance(v) ? `<div class="seg"><button class="btn ${!o.finance ? 'active' : ''}" data-pay="full">Pay in full</button><button class="btn ${o.finance ? 'active' : ''}" data-pay="finance">Finance</button></div>` : ''}
+      ${plan ? `<div class="finance-box">
+          <label class="field"><span>Term</span><select class="input" data-term>${terms.map((t, i) => `<option value="${i + 1}" ${o.term === i + 1 ? 'selected' : ''}>${t.payments} payments · ${Math.round(t.interest * 100)}% interest</option>`).join('')}</select></label>
+          <label class="field"><span>Deposit <em id="s-dep">${Math.round(Math.max(f.finance.minDeposit, o.deposit) * 100)}%</em></span>
+            <input type="range" class="range" min="${Math.round(f.finance.minDeposit * 100)}" max="90" step="5" value="${Math.round(Math.max(f.finance.minDeposit, o.deposit) * 100)}" data-deposit></label>
+          <div class="kv"><span>Deposit today</span><span id="s-plan-dep"></span></div>
+          <div class="kv"><span>Instalments</span><span id="s-plan-inst"></span></div>
+          <div class="kv"><span>Total cost</span><span id="s-plan-total"></span></div>
+          <div class="muted small">Instalments are taken from your bank while you're online. Missing ${f.finance.maxMissed || 3} in a row means the car is repossessed. Check them with /financing.</div>
+        </div>` : ''}
+      ${f.customPlate && f.customPlate.enabled ? `<label class="field"><span>Custom plate <em>+${fmtMoney(f.customPlate.price)} · optional</em></span>
+        <input class="input mono plate-input" maxlength="8" placeholder="RANDOM" value="${esc(o.plate)}" data-plate></label>` : ''}
+    </div>` : ''}
+    ${selfService && methods.length > 1 && !soldOut ? `<div class="seg">${methods.map((m) => `
       <button class="btn ${S.shop.method === m ? 'active' : ''}" data-method="${esc(m)}">${methodLabel(m)}${b[m] != null ? `<small>${fmtMoney(b[m])}</small>` : ''}</button>`).join('')}</div>` : ''}
-    ${selfService && bal != null && !soldOut ? `<div class="after ${affordable ? '' : 'neg'}"><span>Balance after purchase</span><b>${fmtMoney(bal - v.price)}</b></div>` : ''}
+    ${selfService && !soldOut ? '<div class="after hidden" id="s-after"></div>' : ''}
     <div class="actions">
       ${S.shop.dealership.testDrive ? `<button class="btn" data-act="test" ${S.shop.busy ? 'disabled' : ''}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2"/><path d="M12 3v7M4.5 15.5l5.8-2.5M19.5 15.5l-5.8-2.5"/></svg>
         Test drive · ${S.shop.dealership.testDriveDuration}s</button>` : ''}
-      ${selfService
-        ? `<button class="btn primary" data-act="buy" ${soldOut || !affordable || S.shop.busy ? 'disabled' : ''}>${buyLabel}</button>`
-        : '<div class="hint center">Purchases here go through a salesperson.</div>'}
+      ${selfService ? '<button class="btn primary" data-act="buy" id="s-buy"></button>' : '<div class="hint center">Purchases here go through a salesperson.</div>'}
     </div>`;
+  refreshTotals();
+}
+
+/** Updates the money figures without re-rendering (keeps input focus). */
+function refreshTotals() {
+  const v = selectedVehicle();
+  if (!v) return;
+  const bal = S.shop.balance[S.shop.method];
+  const up = upfrontFor(v);
+  const affordable = bal == null || bal >= up;
+  const soldOut = v.stock === 0;
+
+  const after = $('#s-after');
+  if (after) {
+    after.classList.toggle('hidden', bal == null);
+    after.classList.toggle('neg', !affordable);
+    after.innerHTML = `<span>Balance after purchase</span><b>${fmtMoney((bal || 0) - up)}</b>`;
+  }
+  const plan = planFor(v);
+  if (plan && $('#s-plan-dep')) {
+    $('#s-plan-dep').textContent = fmtMoney(plan.deposit);
+    $('#s-plan-inst').textContent = `${plan.payments} × ${fmtMoney(plan.payment)}`;
+    $('#s-plan-total').textContent = fmtMoney(plan.deposit + plan.total);
+  }
+  const buy = $('#s-buy');
+  if (buy) {
+    buy.disabled = soldOut || !affordable || S.shop.busy;
+    if (soldOut) buy.textContent = 'Sold out';
+    else if (!affordable) buy.textContent = S.shop.method === 'cash' ? 'Not enough cash' : 'Not enough money in the bank';
+    else buy.textContent = plan ? `Pay deposit ${fmtMoney(up)}` : `Buy for ${fmtMoney(up)}`;
+  }
 }
 
 $('#s-cats').addEventListener('click', (e) => {
@@ -810,13 +887,50 @@ document.addEventListener('keydown', (e) => {
 });
 
 function purchaseSummary(v) {
+  const o = S.shop.opts;
+  const plan = planFor(v);
   const bal = S.shop.balance[S.shop.method];
+  const up = upfrontFor(v);
   return `<div class="confirm-car"><div class="thumb mini">${thumb(v.model)}</div>
-      <div><div class="row-title">${esc(v.label)}</div><div class="muted small">${esc(S.catLabel[v.category] || v.category)}</div></div></div>
+      <div><div class="row-title">${esc(v.label)}</div><div class="muted small">${esc(S.catLabel[v.category] || v.category)}${v.used ? ` · ${v.condition}% condition` : ''}</div></div></div>
     <div class="kv"><span>Price</span><span>${fmtMoney(v.price)}</span></div>
-    <div class="kv"><span>Paid by</span><span>${methodLabel(S.shop.method)}</span></div>
-    ${bal != null ? `<div class="kv"><span>Balance after</span><span>${fmtMoney(bal - v.price)}</span></div>` : ''}
+    ${o.color1 != null ? `<div class="kv"><span>Paint</span><span>${esc(colorInfo(o.color1).label)}${o.color2 != null && o.color2 !== o.color1 ? ` / ${esc(colorInfo(o.color2).label)}` : ''}</span></div>` : ''}
+    ${plateFee() ? `<div class="kv"><span>Custom plate</span><span>${esc(o.plate.trim().toUpperCase())} · ${fmtMoney(plateFee())}</span></div>` : ''}
+    ${plan ? `<div class="kv"><span>Financing</span><span>${plan.payments} × ${fmtMoney(plan.payment)}</span></div>` : ''}
+    <div class="kv"><span>${plan ? 'Due today' : 'Total'}</span><span>${fmtMoney(up)} · ${methodLabel(S.shop.method)}</span></div>
+    ${bal != null ? `<div class="kv"><span>Balance after</span><span>${fmtMoney(bal - up)}</span></div>` : ''}
     <div class="kv"><span>Delivery</span><span>Delivery bay · keys included</span></div>`;
+}
+
+async function doBuy() {
+  const v = selectedVehicle();
+  if (!v || S.shop.busy) return;
+  const o = S.shop.opts;
+  const ok = await askConfirm('Confirm purchase', '', `Pay ${fmtMoney(upfrontFor(v))}`, false, purchaseSummary(v));
+  if (!ok || !S.shop) return;
+  S.shop.busy = true; refreshTotals();
+  const res = await post('shopBuy', {
+    vehicleId: v.id,
+    method: S.shop.method,
+    options: {
+      color1: o.color1, color2: o.color2 != null ? o.color2 : o.color1,
+      plate: o.plate.trim(),
+      finance: planFor(v) ? { term: o.term, deposit: o.deposit } : null,
+    },
+  });
+  if (!S.shop) return;
+  S.shop.busy = false; refreshTotals();
+  if (!res || !res.ok) toast((res && res.error) || 'Purchase failed.', 'error');
+}
+
+async function doTestDrive() {
+  const v = selectedVehicle();
+  if (!v || S.shop.busy) return;
+  S.shop.busy = true; renderShopDetails();
+  const res = await post('shopTestDrive', { vehicleId: v.id });
+  if (!S.shop) return;
+  S.shop.busy = false; renderShopDetails();
+  if (!res || !res.ok) toast((res && res.error) || 'Test drive unavailable.', 'error');
 }
 
 $('#s-details').addEventListener('click', async (e) => {
@@ -826,24 +940,49 @@ $('#s-details').addEventListener('click', async (e) => {
     S.shop.method = b.dataset.method;
     return renderShopDetails();
   }
-  const v = S.shop.vehicles.find((x) => x.id === S.shop.selected);
-  if (!v || S.shop.busy) return;
-
-  if (b.dataset.act === 'buy') {
-    const ok = await askConfirm('Confirm purchase', '', `Pay ${fmtMoney(v.price)}`, false, purchaseSummary(v));
-    if (!ok || !S.shop) return;
-    S.shop.busy = true; renderShopDetails();
-    const res = await post('shopBuy', { vehicleId: v.id, method: S.shop.method });
-    if (!S.shop) return;
-    S.shop.busy = false; renderShopDetails();
-    if (!res || !res.ok) toast((res && res.error) || 'Purchase failed.', 'error');
-  } else if (b.dataset.act === 'test') {
-    S.shop.busy = true; renderShopDetails();
-    const res = await post('shopTestDrive', { vehicleId: v.id });
-    if (!S.shop) return;
-    S.shop.busy = false; renderShopDetails();
-    if (!res || !res.ok) toast((res && res.error) || 'Test drive unavailable.', 'error');
+  if (b.dataset.pay) {
+    S.shop.opts.finance = b.dataset.pay === 'finance';
+    if (!S.shop.opts.finance) S.shop.method = S.shop.payment[0];
+    return renderShopDetails();
   }
+  if (b.dataset.act === 'buy') doBuy();
+  else if (b.dataset.act === 'test') doTestDrive();
+  else if (b.dataset.act === 'preview' && typeof enterPreview === 'function') enterPreview();
+});
+
+$('#s-details').addEventListener('change', (e) => {
+  if (e.target.matches('[data-term]')) { S.shop.opts.term = Number(e.target.value); refreshTotals(); }
+});
+
+$('#s-details').addEventListener('input', (e) => {
+  if (e.target.matches('[data-deposit]')) {
+    S.shop.opts.deposit = Number(e.target.value) / 100;
+    $('#s-dep').textContent = `${e.target.value}%`;
+    refreshTotals();
+  } else if (e.target.matches('[data-plate]')) {
+    const clean = e.target.value.toUpperCase().replace(/[^A-Z0-9 ]/g, '').slice(0, 8);
+    if (clean !== e.target.value) e.target.value = clean;
+    S.shop.opts.plate = clean;
+    refreshTotals();
+  }
+});
+
+// Trade-in: quote the car the player arrived in
+$('#s-trade').addEventListener('click', async () => {
+  if (!S.shop) return;
+  const q = await post('tradeQuote');
+  if (!q || !q.ok) return toast((q && q.error) || 'No vehicle to trade in.', 'error');
+  const html = `<div class="confirm-car"><div class="thumb mini">${thumb(q.model)}</div>
+      <div><div class="row-title">${esc(q.label)}</div><div class="muted small mono">${esc(q.plate)}</div></div></div>
+    <div class="kv"><span>Condition</span><span>${q.condition}%</span></div>
+    <div class="kv"><span>Our offer</span><span class="pos">${fmtMoney(q.value)}</span></div>
+    <div class="muted small">Paid to your bank. The car leaves your garage and goes on our pre-owned lot. Offer valid for 60 seconds.</div>`;
+  const ok = await askConfirm('Trade-in offer', '', `Sell for ${fmtMoney(q.value)}`, false, html);
+  if (!ok) return;
+  const res = await post('tradeAccept');
+  if (!res || !res.ok) return toast((res && res.error) || 'Trade-in failed.', 'error');
+  toast(res.message, 'success');
+  if (S.shop && res.balance) { S.shop.balance = res.balance; renderBalance(); refreshTotals(); }
 });
 
 /* ==========================================================================
@@ -857,6 +996,7 @@ window.addEventListener('message', (e) => {
     case 'shopUpdate':
       if (S.shop) {
         S.shop.vehicles = arr(msg.vehicles);
+        if (msg.categories) setCategories(msg.categories);
         if (!S.shop.vehicles.some((v) => v.id === S.shop.selected)) S.shop.selected = null;
         renderShopCats(); renderShopGrid(); renderShopDetails();
       }
@@ -872,5 +1012,6 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!$('#modal').classList.contains('hidden')) return closeModal(false);
   if (!$('#offer').classList.contains('hidden')) return; // business.js declines the offer
+  if (!$('#preview').classList.contains('hidden')) return exitPreview();
   if (anyWindowOpen()) requestClose();
 });

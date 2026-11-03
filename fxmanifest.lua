@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'gen_dealership'
 description 'In-game vehicle dealership creator & shop for FiveM (Qbox / QBCore / ESX / standalone)'
-version '1.4.0'
+version '1.5.0'
 
 ui_page 'html/index.html'
 
@@ -14,6 +14,7 @@ files {
     'html/app.js',
     'html/business.js',
     'html/logistics.js',
+    'html/buying.js',
 }
 
 shared_scripts {
@@ -29,6 +30,7 @@ client_scripts {
     'client/creator.lua',
     'client/business.lua',
     'client/logistics.lua',
+    'client/preview.lua',
 }
 
 server_scripts {
@@ -41,6 +43,8 @@ server_scripts {
     'server/business.lua',
     'server/simulation.lua',
     'server/logistics.lua',
+    'server/usedlot.lua',
+    'server/finance.lua',
     'server/main.lua',
 }
 

@@ -14,11 +14,12 @@ State = {
     negotiating = false,
     offerOpen = false,
     logisticsOpen = false,
+    financeOpen = false,
 }
 
 function UIBusy()
     return State.shopOpen or State.creatorOpen or State.placing or State.testDrive ~= nil
-        or State.manageOpen or State.negotiating or State.offerOpen or State.logisticsOpen
+        or State.manageOpen or State.negotiating or State.offerOpen or State.logisticsOpen or State.financeOpen
 end
 
 local Blips = {}
@@ -204,7 +205,7 @@ local function applySync(list)
     if State.shopOpen and State.shopId then
         local d = findDealership(State.shopId)
         if d then
-            SendNUIMessage({ action = 'shopUpdate', vehicles = d.vehicles })
+            SendNUIMessage({ action = 'shopUpdate', vehicles = ShopVehicles(d), categories = shopCategories(d) })
         else
             CloseUI()
         end
@@ -227,6 +228,7 @@ end)
 -- ---------------------------------------------------------------------------
 
 function CloseUI()
+    if StopPreview then StopPreview() end
     SetNuiFocus(false, false)
     SendNUIMessage({ action = 'close' })
     if State.negotiating then TriggerServerEvent('gen_dealership:customerRelease') end
@@ -238,6 +240,40 @@ function CloseUI()
     State.negotiating = false
     State.offerOpen = false
     State.logisticsOpen = false
+    State.financeOpen = false
+end
+
+--- Catalogue + pre-owned listings as one list for the shop UI
+function ShopVehicles(d)
+    local list = {}
+    for _, v in ipairs(d.vehicles) do list[#list + 1] = v end
+    for _, u in ipairs(d.used or {}) do
+        list[#list + 1] = {
+            id = Utils.USED_OFFSET + u.id, model = u.model, label = u.label, category = 'preowned',
+            price = u.price, stock = -1, used = true, condition = u.condition, source = u.source,
+        }
+    end
+    return list
+end
+
+local function shopCategories(d)
+    local cats = {}
+    for _, c in ipairs(Config.Categories) do cats[#cats + 1] = c end
+    if d.used and #d.used > 0 then cats[#cats + 1] = { id = 'preowned', label = 'Pre-owned' } end
+    return cats
+end
+
+local function shopFeatures()
+    return {
+        preview = Config.Preview.enabled,
+        colors = Config.Colors,
+        customPlate = Config.CustomPlate,
+        finance = Config.Finance.enabled and {
+            minPrice = Config.Finance.minPrice, minDeposit = Config.Finance.minDeposit,
+            terms = Config.Finance.terms, interval = Config.Finance.interval, maxMissed = Config.Finance.maxMissed,
+        } or false,
+        tradeIn = Config.TradeIn.enabled,
+    }
 end
 
 local function openShop(d)
@@ -256,8 +292,9 @@ local function openShop(d)
             selfService = Config.Simulation.selfService or not (d.business and d.business.owned),
             role = State.roles[tostring(d.id)],
         },
-        vehicles = d.vehicles,
-        categories = Config.Categories,
+        vehicles = ShopVehicles(d),
+        categories = shopCategories(d),
+        features = shopFeatures(),
         balance = balance,
         payment = Config.PaymentMethods,
         currency = Config.Currency,
@@ -307,7 +344,8 @@ end)
 -- Spawning purchased / test drive vehicles
 -- ---------------------------------------------------------------------------
 
-function SpawnPlayerVehicle(model, coords, plate)
+--- @param extra table|nil { props = { color1, color2 }, condition = 0-100 }
+function SpawnPlayerVehicle(model, coords, plate, extra)
     local hash = LoadVehicleModel(model)
     if not hash then return nil end
 
@@ -323,6 +361,16 @@ function SpawnPlayerVehicle(model, coords, plate)
     SetVehicleNeedsToBeHotwired(veh, false)
     SetVehRadioStation(veh, 'OFF')
     SetVehicleDirtLevel(veh, 0.0)
+    if extra then
+        local props = extra.props
+        if props and props.color1 then SetVehicleColours(veh, props.color1, props.color2 or props.color1) end
+        if extra.condition and extra.condition < 100 then
+            local health = math.max(300.0, extra.condition * 10.0)
+            SetVehicleBodyHealth(veh, health)
+            SetVehicleEngineHealth(veh, health)
+            SetVehicleDirtLevel(veh, (100 - extra.condition) / 10.0)
+        end
+    end
 
     local netId = NetworkGetNetworkIdFromEntity(veh)
     SetNetworkIdCanMigrate(netId, true)
@@ -345,7 +393,7 @@ RegisterNUICallback('shopBuy', function(data, cb)
     if not d or not d.spawn then return cb({ ok = false, error = T('vehicle_not_found') }) end
     if SpotBlocked(d.spawn) then return cb({ ok = false, error = T('spawn_blocked') }) end
 
-    local res = TriggerCallback('shop:buy', d.id, data.vehicleId, data.method)
+    local res = TriggerCallback('shop:buy', d.id, data.vehicleId, data.method, data.options or {})
     if not res then return cb({ ok = false, error = 'No response from server.' }) end
     cb(res)
     if not res.ok then return end
@@ -353,9 +401,10 @@ RegisterNUICallback('shopBuy', function(data, cb)
     CloseUI()
     DoScreenFadeOut(300)
     Wait(350)
-    SpawnPlayerVehicle(res.model, d.spawn, res.plate)
+    SpawnPlayerVehicle(res.model, d.spawn, res.plate, { props = res.props, condition = res.condition })
     DoScreenFadeIn(400)
     Bridge.Notify(T('purchased', res.label, res.priceText, res.plate), 'success')
+    if res.financed then Bridge.Notify(T('finance_started', Config.Finance.command), 'primary') end
 end)
 
 RegisterNUICallback('shopBuyBusiness', function(data, cb)

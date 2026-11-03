@@ -437,3 +437,60 @@ kbd { display: inline-block; min-width: 18px; padding: 0 4px; margin-right: 2px;
   position: sticky; bottom: -18px; margin: auto -18px -18px; padding: 14px 18px 18px;
   background: linear-gradient(180deg, transparent, rgba(13, 15, 21, .96) 30%);
 }
+
+/* ======================= buying: options, preview, finance ======================= */
+.stage .stage-btn {
+  position: absolute; bottom: 10px; right: 10px; border: 1px solid rgba(255, 255, 255, .15);
+  background: rgba(10, 12, 18, .65); backdrop-filter: blur(6px); color: var(--text);
+  font: 600 12px var(--font); padding: 6px 10px; border-radius: 999px; cursor: pointer;
+}
+.stage .stage-btn:hover { border-color: var(--accent); color: #fff; }
+.chip.used { background: rgba(138, 92, 255, .18); color: #b9a3ff; }
+.thumb .chip.used { color: #c7b6ff; }
+
+.opt-group { display: flex; flex-direction: column; gap: 10px; }
+.opt-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); }
+.paint { color: var(--text); display: inline-flex; align-items: center; gap: 6px; }
+.dot-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, .3); }
+.finance-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; background: rgba(var(--accent-rgb), .06); border: 1px solid rgba(var(--accent-rgb), .25); }
+.finance-box .kv { padding: 4px 0; }
+.range { width: 100%; accent-color: var(--accent); }
+.plate-input { text-transform: uppercase; letter-spacing: 2px; font-weight: 600; }
+
+/* full-screen preview overlay: transparent so the game camera shows through */
+.window.preview-ui {
+  inset: 0; top: 0; left: 0; transform: none; width: 100vw; height: 100vh;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .35), transparent 22%, transparent 62%, rgba(0, 0, 0, .55));
+  border: 0; border-radius: 0; box-shadow: none; backdrop-filter: none; animation: fade .25s ease-out;
+}
+@keyframes fade { from { opacity: 0; } }
+.pv-drag { position: absolute; inset: 0; cursor: grab; }
+.pv-drag.grabbing { cursor: grabbing; }
+.pv-top { position: absolute; top: 24px; left: 24px; right: 24px; display: flex; align-items: center; gap: 16px; pointer-events: none; }
+.pv-top > * { pointer-events: auto; }
+.pv-hint { color: rgba(255, 255, 255, .75); font-size: 13px; text-shadow: 0 1px 4px rgba(0, 0, 0, .6); }
+.pv-panel {
+  position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); width: min(1100px, 94vw);
+  display: grid; grid-template-columns: 1fr auto auto; gap: 28px; align-items: center;
+  padding: 18px 22px; border-radius: 18px; background: rgba(13, 15, 21, .82); backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, .08); box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+}
+.pv-info h2 { margin: 2px 0; font-size: 24px; }
+.pv-info .big-price { font-size: 22px; }
+.pv-colors { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.mini-seg .btn { padding: 4px 12px; font-size: 12px; }
+.swatches { display: grid; grid-template-columns: repeat(8, 26px); gap: 7px; }
+.swatch {
+  width: 26px; height: 26px; border-radius: 50%; cursor: pointer; border: 2px solid rgba(255, 255, 255, .15);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, .45), transparent 45%), var(--sw);
+  transition: transform .1s, border-color .1s;
+}
+.swatch:hover { transform: scale(1.12); }
+.swatch.active { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+.pv-actions { display: flex; flex-direction: column; gap: 8px; min-width: 210px; }
+.pv-actions .btn { padding: 11px 16px; border-radius: 12px; font-weight: 600; }
+
+.contract { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.contract-head { display: flex; align-items: center; gap: 12px; }
+.contract-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.contract .meter { margin-top: 0; }
