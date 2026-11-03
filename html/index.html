@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dealership</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ======================= CREATOR ======================= -->
+<div id="creator" class="window hidden" role="dialog" aria-label="Dealership creator">
+  <header class="win-head">
+    <div class="title"><span class="logo">◆</span> Dealership Creator</div>
+    <button class="icon-btn" data-close title="Close (Esc)">✕</button>
+  </header>
+
+  <div class="win-body">
+    <aside class="sidebar">
+      <button class="btn primary block" id="c-new">+ New dealership</button>
+      <input class="input" id="c-filter" placeholder="Search dealerships…" autocomplete="off">
+      <ul id="c-list" class="list"></ul>
+    </aside>
+
+    <main class="editor">
+      <div class="empty" id="c-empty">
+        <div class="empty-icon">🚗</div>
+        <p>Select a dealership on the left or create a new one.</p>
+      </div>
+
+      <div id="c-form" class="hidden">
+        <nav class="tabs" id="c-tabs">
+          <button data-tab="general" class="active">General</button>
+          <button data-tab="locations">Locations <span class="badge" id="t-loc"></span></button>
+          <button data-tab="vehicles">Vehicles <span class="badge" id="t-veh"></span></button>
+          <button data-tab="showroom">Showroom <span class="badge" id="t-show"></span></button>
+        </nav>
+
+        <div class="panes">
+          <!-- General -->
+          <section class="pane" data-pane="general">
+            <div class="grid-2">
+              <label class="field">
+                <span>Display name</span>
+                <input class="input" data-field="label" maxlength="100" placeholder="Premium Deluxe Motorsport">
+              </label>
+              <label class="field">
+                <span>Identifier <em>unique, a-z 0-9 - _</em></span>
+                <input class="input" data-field="name" maxlength="64" placeholder="pdm">
+              </label>
+              <label class="field">
+                <span>Restrict to job <em>optional</em></span>
+                <input class="input" data-field="job" maxlength="64" placeholder="e.g. police">
+              </label>
+            </div>
+
+            <h3 class="section-title">Map blip</h3>
+            <div class="grid-4">
+              <label class="field check">
+                <input type="checkbox" data-field="blip.enabled"> <span>Show blip</span>
+              </label>
+              <label class="field">
+                <span>Sprite</span>
+                <input class="input" type="number" min="1" max="900" data-field="blip.sprite">
+              </label>
+              <label class="field">
+                <span>Colour</span>
+                <input class="input" type="number" min="0" max="85" data-field="blip.color">
+              </label>
+              <label class="field">
+                <span>Scale</span>
+                <input class="input" type="number" min="0.2" max="3" step="0.1" data-field="blip.scale">
+              </label>
+            </div>
+            <p class="hint">Sprite and colour IDs: docs.fivem.net/docs/game-references/blips</p>
+          </section>
+
+          <!-- Locations -->
+          <section class="pane hidden" data-pane="locations">
+            <p class="hint">Click <b>Place</b>, then aim at the ground in-game. <b>E</b> confirm · <b>G</b> use your own position · <b>Scroll / ← →</b> rotate · <b>Backspace</b> cancel.</p>
+            <div id="loc-list" class="stack"></div>
+          </section>
+
+          <!-- Vehicles -->
+          <section class="pane hidden" data-pane="vehicles">
+            <div class="add-row">
+              <input class="input mono" id="v-model" placeholder="Spawn name" autocomplete="off">
+              <button class="btn" id="v-check" title="Look up the model in-game">Check</button>
+              <input class="input" id="v-label" placeholder="Label">
+              <select class="input" id="v-cat"></select>
+              <input class="input" id="v-price" type="number" min="0" placeholder="Price">
+              <input class="input" id="v-stock" type="number" min="-1" placeholder="Stock ∞" title="Leave empty or -1 for unlimited">
+              <button class="btn primary" id="v-add">Add</button>
+            </div>
+            <div class="table-wrap">
+              <table class="table">
+                <thead><tr><th>Model</th><th>Label</th><th>Category</th><th>Price</th><th>Stock</th><th></th></tr></thead>
+                <tbody id="v-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <!-- Showroom -->
+          <section class="pane hidden" data-pane="showroom">
+            <div class="add-row">
+              <select class="input" id="d-model"></select>
+              <button class="btn primary" id="d-add">+ Place display vehicle</button>
+              <span class="muted small" id="d-count"></span>
+            </div>
+            <p class="hint">Display vehicles are spawned locally for each player near the dealership. They're frozen and locked, and show their price when someone walks up to them.</p>
+            <div id="d-list" class="stack"></div>
+          </section>
+        </div>
+
+        <footer class="editor-foot">
+          <button class="btn danger" id="c-delete">Delete</button>
+          <span class="spacer"></span>
+          <span class="muted small" id="c-dirty"></span>
+          <button class="btn primary" id="c-save">Save dealership</button>
+        </footer>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ======================= SHOP ======================= -->
+<div id="shop" class="window shop hidden" role="dialog" aria-label="Vehicle shop">
+  <header class="win-head">
+    <div class="title"><span class="logo">◆</span> <span id="s-title">Dealership</span></div>
+    <div class="balances" id="s-balance"></div>
+    <button class="icon-btn" data-close title="Close (Esc)">✕</button>
+  </header>
+  <div class="win-body shop-body">
+    <aside class="sidebar">
+      <input class="input" id="s-search" placeholder="Search vehicles…" autocomplete="off">
+      <ul id="s-cats" class="list cats"></ul>
+    </aside>
+    <main class="catalog" id="s-grid"></main>
+    <aside class="details" id="s-details"></aside>
+  </div>
+</div>
+
+<!-- ======================= MODAL / TOASTS ======================= -->
+<div id="modal" class="modal hidden">
+  <div class="modal-box">
+    <h3 id="m-title"></h3>
+    <p id="m-text"></p>
+    <div class="modal-actions">
+      <button class="btn ghost" id="m-cancel">Cancel</button>
+      <button class="btn primary" id="m-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+<div id="toasts"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
