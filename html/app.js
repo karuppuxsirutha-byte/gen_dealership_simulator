@@ -44,9 +44,10 @@ function toast(msg, type = 'info') {
 }
 
 let modalResolve = null;
-function askConfirm(title, text, okLabel = 'Confirm', danger = false) {
+function askConfirm(title, text, okLabel = 'Confirm', danger = false, html = null) {
   $('#m-title').textContent = title;
-  $('#m-text').textContent = text;
+  if (html) $('#m-text').innerHTML = html;
+  else $('#m-text').textContent = text;
   const ok = $('#m-ok');
   ok.textContent = okLabel;
   ok.className = `btn ${danger ? 'danger' : 'primary'}`;
@@ -59,6 +60,29 @@ function closeModal(value) {
 }
 $('#m-ok').addEventListener('click', () => closeModal(true));
 $('#m-cancel').addEventListener('click', () => closeModal(false));
+
+/* ==========================================================================
+   Theme (Config.UI)
+   ========================================================================== */
+const UI = { accent: '#3d8bff', speedUnit: 'kmh' };
+
+function shade(hex, amount) {
+  const n = parseInt(hex.slice(1), 16);
+  const c = (v) => Math.max(0, Math.min(255, Math.round(v + 255 * amount)));
+  return `rgb(${c(n >> 16)}, ${c((n >> 8) & 255)}, ${c(n & 255)})`;
+}
+
+function applyTheme(ui) {
+  Object.assign(UI, ui || {});
+  if (!/^#[0-9a-f]{6}$/i.test(UI.accent)) return;
+  const n = parseInt(UI.accent.slice(1), 16);
+  const root = document.documentElement.style;
+  root.setProperty('--accent', UI.accent);
+  root.setProperty('--accent-2', shade(UI.accent, -0.12));
+  root.setProperty('--accent-rgb', `${n >> 16}, ${(n >> 8) & 255}, ${n & 255}`);
+}
+
+post('nuiReady').then(applyTheme);
 
 /* ==========================================================================
    State
@@ -565,6 +589,14 @@ $('#c-delete').addEventListener('click', async () => {
 /* ==========================================================================
    SHOP
    ========================================================================== */
+const STATS = {};      // model -> stats | null (loading) | false (unavailable)
+const SORTS = {
+  featured: null,
+  'price-asc': (a, b) => a.price - b.price,
+  'price-desc': (a, b) => b.price - a.price,
+  name: (a, b) => a.label.localeCompare(b.label),
+};
+
 function openShop(data) {
   setCategories(data.categories);
   setCurrency(data.currency);
@@ -577,14 +609,21 @@ function openShop(data) {
     method: payment[0] || 'bank',
     cat: 'all',
     search: '',
+    sort: 'featured',
     selected: null,
     busy: false,
   };
   const biz = data.dealership.business || {};
-  $('#s-title').innerHTML = esc(data.dealership.label) + (biz.owned ? ` <span class="tag">Owned by ${esc(biz.ownerName)}</span>` : '');
+  $('#s-title').textContent = data.dealership.label;
+  $('#s-eyebrow').textContent = biz.owned ? `Owned by ${biz.ownerName}` : 'Official dealer';
   $('#s-search').value = '';
+  $('#s-sort').value = 'featured';
   $$('.window:not(#offer)').forEach((w) => w.classList.add('hidden'));
   $('#shop').classList.remove('hidden');
+
+  // Pre-select the first available vehicle so the details panel is never empty
+  const first = S.shop.vehicles.find((v) => v.stock !== 0) || S.shop.vehicles[0];
+  if (first) selectVehicle(first.id, false);
   renderShop();
 }
 
@@ -601,7 +640,7 @@ function renderBalance() {
   const b = S.shop.balance;
   $('#s-balance').innerHTML = S.shop.payment
     .filter((m) => b[m] != null)
-    .map((m) => `<div class="balance">${methodLabel(m)}<b>${fmtMoney(b[m])}</b></div>`)
+    .map((m) => `<div class="balance"><span>${methodLabel(m)}</span><b>${fmtMoney(b[m])}</b></div>`)
     .join('');
 }
 
@@ -614,12 +653,16 @@ function renderShopCats() {
 }
 
 function filteredVehicles() {
-  const q = S.shop.search.toLowerCase();
-  return S.shop.vehicles.filter((v) => (S.shop.cat === 'all' || v.category === S.shop.cat)
+  const q = S.shop.search.toLowerCase().trim();
+  const list = S.shop.vehicles.filter((v) => (S.shop.cat === 'all' || v.category === S.shop.cat)
     && (!q || v.label.toLowerCase().includes(q) || v.model.toLowerCase().includes(q)));
+  const sorter = SORTS[S.shop.sort];
+  return sorter ? list.slice().sort(sorter) : list;
 }
 
-const stockBadge = (v) => (v.stock < 0 ? '' : v.stock === 0 ? '<span class="badge warn stock">Sold out</span>' : `<span class="badge stock">${v.stock} left</span>`);
+const stockBadge = (v) => (v.stock < 0 ? '' : v.stock === 0
+  ? '<span class="chip warn stock">Sold out</span>'
+  : `<span class="chip ${v.stock <= 2 ? 'hot' : ''} stock">${v.stock <= 2 ? `Only ${v.stock} left` : `${v.stock} in stock`}</span>`);
 
 function businessBanner() {
   const b = S.shop.dealership.business || {};
@@ -634,13 +677,60 @@ function businessBanner() {
 
 function renderShopGrid() {
   const list = filteredVehicles();
+  const catName = S.shop.cat === 'all' ? 'All vehicles' : (S.catLabel[S.shop.cat] || S.shop.cat);
+  $('#s-bar').innerHTML = `<span><b>${list.length}</b> ${list.length === 1 ? 'vehicle' : 'vehicles'} · ${esc(catName)}</span>
+    <span class="muted small kbd-hint"><kbd>←</kbd><kbd>→</kbd> browse</span>`;
   $('#s-grid').innerHTML = businessBanner() + list.map((v) => `<div class="card ${S.shop.selected === v.id ? 'active' : ''} ${v.stock === 0 ? 'sold-out' : ''}" data-vid="${v.id}">
-      <div class="thumb">${thumb(v.model)}${stockBadge(v)}</div>
+      <div class="thumb">${thumb(v.model)}<span class="chip cat">${esc(S.catLabel[v.category] || v.category)}</span>${stockBadge(v)}</div>
       <div class="card-body">
         <div class="card-title">${esc(v.label)}</div>
-        <div class="card-meta"><span class="tag">${esc(S.catLabel[v.category] || v.category)}</span><span class="price">${fmtMoney(v.price)}</span></div>
+        <div class="card-meta"><span class="price">${fmtMoney(v.price)}</span><span class="muted small mono">${esc(v.model)}</span></div>
       </div>
-    </div>`).join('') || '<div class="no-results">No vehicles match.</div>';
+    </div>`).join('') || `<div class="no-results"><div class="empty-icon">🔍</div>No vehicles match “${esc(S.shop.search)}”.</div>`;
+}
+
+async function loadStats(model) {
+  if (STATS[model] !== undefined) return;
+  STATS[model] = null;
+  const res = await post('vehicleStats', { model });
+  STATS[model] = res && res.ok ? res : false;
+  const sel = S.shop && S.shop.vehicles.find((x) => x.id === S.shop.selected);
+  if (sel && sel.model === model) renderShopDetails();
+}
+
+function selectVehicle(id, render = true) {
+  S.shop.selected = id;
+  const v = S.shop.vehicles.find((x) => x.id === id);
+  if (v) loadStats(v.model);
+  if (render) {
+    renderShopGrid();
+    renderShopDetails();
+    const card = $(`#s-grid [data-vid="${id}"]`);
+    if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+function statBars(model) {
+  const st = STATS[model];
+  if (st === false) return '';
+  if (!st) {
+    return `<div class="stats">${['Top speed', 'Acceleration', 'Braking', 'Handling'].map((l) => `
+      <div class="stat"><div class="stat-head"><span>${l}</span><span class="skeleton"></span></div><div class="stat-bar"><span class="skeleton"></span></div></div>`).join('')}</div>`;
+  }
+  const mph = UI.speedUnit === 'mph';
+  const speed = Math.round(st.speed * (mph ? 2.236936 : 3.6));
+  const rows = [
+    ['Top speed', st.speed / 60, `${speed} ${mph ? 'mph' : 'km/h'}`],
+    ['Acceleration', st.accel / 0.45],
+    ['Braking', st.braking / 1.6],
+    ['Handling', st.traction / 3.2],
+  ];
+  return `<div class="stats">${rows.map(([label, ratio, text]) => {
+    const pctv = Math.max(4, Math.min(100, ratio * 100));
+    return `<div class="stat"><div class="stat-head"><span>${label}</span><span>${text || `${(pctv / 10).toFixed(1)} / 10`}</span></div>
+      <div class="stat-bar"><span style="width:${pctv}%"></span></div></div>`;
+  }).join('')}</div>
+  ${st.seats ? `<div class="chips"><span class="chip">${st.seats} seat${st.seats === 1 ? '' : 's'}</span></div>` : ''}`;
 }
 
 function renderShopDetails() {
@@ -652,24 +742,33 @@ function renderShopDetails() {
   }
   const b = S.shop.balance;
   const soldOut = v.stock === 0;
+  const bal = b[S.shop.method];
+  const affordable = bal == null || bal >= v.price;
+  const selfService = S.shop.dealership.selfService;
+
+  let buyLabel = `Buy for ${fmtMoney(v.price)}`;
+  if (soldOut) buyLabel = 'Sold out';
+  else if (!affordable) buyLabel = S.shop.method === 'cash' ? 'Not enough cash' : 'Not enough money in the bank';
+
   el.innerHTML = `
-    <div class="thumb">${thumb(v.model)}</div>
+    <div class="stage">${thumb(v.model)}</div>
     <div>
+      <div class="chips"><span class="chip">${esc(S.catLabel[v.category] || v.category)}</span>${stockBadge(v).replace(' stock', '') || '<span class="chip good">In stock</span>'}</div>
       <h2>${esc(v.label)}</h2>
       <div class="muted small mono">${esc(v.model)}</div>
     </div>
     <div class="big-price">${fmtMoney(v.price)}</div>
-    <div>
-      <div class="kv"><span>Category</span><span>${esc(S.catLabel[v.category] || v.category)}</span></div>
-      <div class="kv"><span>Availability</span><span>${v.stock < 0 ? 'In stock' : soldOut ? 'Sold out' : `${v.stock} left`}</span></div>
-    </div>
-    ${S.shop.payment.length > 1 ? `<div class="seg">${S.shop.payment.map((m) => `
+    ${statBars(v.model)}
+    ${selfService && S.shop.payment.length > 1 ? `<div class="seg">${S.shop.payment.map((m) => `
       <button class="btn ${S.shop.method === m ? 'active' : ''}" data-method="${esc(m)}">${methodLabel(m)}${b[m] != null ? `<small>${fmtMoney(b[m])}</small>` : ''}</button>`).join('')}</div>` : ''}
+    ${selfService && bal != null && !soldOut ? `<div class="after ${affordable ? '' : 'neg'}"><span>Balance after purchase</span><b>${fmtMoney(bal - v.price)}</b></div>` : ''}
     <div class="actions">
-      ${S.shop.dealership.testDrive ? `<button class="btn" data-act="test" ${S.shop.busy ? 'disabled' : ''}>Test drive · ${S.shop.dealership.testDriveDuration}s</button>` : ''}
-      ${S.shop.dealership.selfService
-        ? `<button class="btn primary" data-act="buy" ${soldOut || S.shop.busy ? 'disabled' : ''}>${soldOut ? 'Sold out' : `Buy for ${fmtMoney(v.price)}`}</button>`
-        : '<div class="hint">Purchases here go through a salesperson.</div>'}
+      ${S.shop.dealership.testDrive ? `<button class="btn" data-act="test" ${S.shop.busy ? 'disabled' : ''}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2"/><path d="M12 3v7M4.5 15.5l5.8-2.5M19.5 15.5l-5.8-2.5"/></svg>
+        Test drive · ${S.shop.dealership.testDriveDuration}s</button>` : ''}
+      ${selfService
+        ? `<button class="btn primary" data-act="buy" ${soldOut || !affordable || S.shop.busy ? 'disabled' : ''}>${buyLabel}</button>`
+        : '<div class="hint center">Purchases here go through a salesperson.</div>'}
     </div>`;
 }
 
@@ -682,6 +781,7 @@ $('#s-cats').addEventListener('click', (e) => {
 });
 
 $('#s-search').addEventListener('input', (e) => { S.shop.search = e.target.value; renderShopGrid(); });
+$('#s-sort').addEventListener('change', (e) => { S.shop.sort = e.target.value; renderShopGrid(); });
 
 $('#s-grid').addEventListener('click', async (e) => {
   if (e.target.closest('[data-buybiz]')) {
@@ -693,11 +793,31 @@ $('#s-grid').addEventListener('click', async (e) => {
     return;
   }
   const card = e.target.closest('[data-vid]');
-  if (!card) return;
-  S.shop.selected = Number(card.dataset.vid);
-  renderShopGrid();
-  renderShopDetails();
+  if (card) selectVehicle(Number(card.dataset.vid));
 });
+
+// Arrow keys browse the grid while the shop is open (not while typing)
+document.addEventListener('keydown', (e) => {
+  if (!S.shop || $('#shop').classList.contains('hidden') || !$('#modal').classList.contains('hidden')) return;
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement && document.activeElement.tagName)) return;
+  const list = filteredVehicles();
+  if (!list.length) return;
+  const idx = list.findIndex((v) => v.id === S.shop.selected);
+  let next = null;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = list[Math.min(list.length - 1, idx + 1)];
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = list[Math.max(0, idx - 1)];
+  if (next) { e.preventDefault(); selectVehicle(next.id); }
+});
+
+function purchaseSummary(v) {
+  const bal = S.shop.balance[S.shop.method];
+  return `<div class="confirm-car"><div class="thumb mini">${thumb(v.model)}</div>
+      <div><div class="row-title">${esc(v.label)}</div><div class="muted small">${esc(S.catLabel[v.category] || v.category)}</div></div></div>
+    <div class="kv"><span>Price</span><span>${fmtMoney(v.price)}</span></div>
+    <div class="kv"><span>Paid by</span><span>${methodLabel(S.shop.method)}</span></div>
+    ${bal != null ? `<div class="kv"><span>Balance after</span><span>${fmtMoney(bal - v.price)}</span></div>` : ''}
+    <div class="kv"><span>Delivery</span><span>Delivery bay · keys included</span></div>`;
+}
 
 $('#s-details').addEventListener('click', async (e) => {
   const b = e.target.closest('button');
@@ -710,7 +830,7 @@ $('#s-details').addEventListener('click', async (e) => {
   if (!v || S.shop.busy) return;
 
   if (b.dataset.act === 'buy') {
-    const ok = await askConfirm(`Buy ${v.label}?`, `${fmtMoney(v.price)} will be paid by ${methodLabel(S.shop.method).toLowerCase()}.`, 'Buy');
+    const ok = await askConfirm('Confirm purchase', '', `Pay ${fmtMoney(v.price)}`, false, purchaseSummary(v));
     if (!ok || !S.shop) return;
     S.shop.busy = true; renderShopDetails();
     const res = await post('shopBuy', { vehicleId: v.id, method: S.shop.method });

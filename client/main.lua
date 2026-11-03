@@ -264,6 +264,40 @@ local function openShop(d)
     })
 end
 
+RegisterNUICallback('nuiReady', function(_, cb)
+    cb(Config.UI)
+end)
+
+-- Performance figures for the shop's stat bars (loaded on demand, cached)
+local StatCache = {}
+RegisterNUICallback('vehicleStats', function(data, cb)
+    local model = type(data.model) == 'string' and data.model:lower() or ''
+    if StatCache[model] then return cb(StatCache[model]) end
+    if not Utils.ValidModelName(model) then return cb({ ok = false }) end
+
+    local hash = joaat(model)
+    if not IsModelInCdimage(hash) or not IsModelAVehicle(hash) then return cb({ ok = false }) end
+    local loadedHere = false
+    if not HasModelLoaded(hash) then
+        RequestModel(hash)
+        local timeout = GetGameTimer() + 3000
+        while not HasModelLoaded(hash) and GetGameTimer() < timeout do Wait(0) end
+        loadedHere = true
+    end
+
+    local stats = {
+        ok = true,
+        speed = GetVehicleModelEstimatedMaxSpeed(hash),   -- m/s
+        accel = GetVehicleModelAcceleration(hash),
+        braking = GetVehicleModelMaxBraking(hash),
+        traction = GetVehicleModelMaxTraction(hash),
+        seats = GetVehicleModelNumberOfSeats(hash),
+    }
+    if loadedHere then SetModelAsNoLongerNeeded(hash) end
+    StatCache[model] = stats
+    cb(stats)
+end)
+
 RegisterNUICallback('close', function(_, cb)
     CloseUI()
     cb('ok')

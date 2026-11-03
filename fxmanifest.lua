@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'gen_dealership'
 description 'In-game vehicle dealership creator & shop for FiveM (Qbox / QBCore / ESX / standalone)'
-version '1.3.0'
+version '1.4.0'
 
 ui_page 'html/index.html'
 

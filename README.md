@@ -20,7 +20,8 @@ Works with **Qbox**, **QBCore**, **ESX** and **standalone** (detected automatica
 - Changes sync live to every player. No restart needed
 
 **Player shop**
-- Catalogue grid with category filter, search, stock badges and vehicle images
+- Catalogue grid with category filter, search, sorting, stock badges, vehicle images and arrow-key browsing
+- Details panel with real performance stats read from the game (top speed, acceleration, braking, handling, seats), your balance after purchase, and a purchase summary before you pay
 - Pay with bank or cash (configurable)
 - **Test drives:** start one from the catalogue, or walk up to any showroom car and press **E**.
   - The car spawns at the test-drive point with a countdown and a range readout, and turns red as you near the limit.
@@ -101,6 +102,8 @@ Admins can revoke ownership from the creator. With `Config.Simulation.adminFullA
 ## Configuration
 
 Everything lives in `config.lua`: command name, ACE, interaction key and distances, plate format, payment methods, test drive duration and cooldown, limits, categories and all player-facing text.
+
+`Config.UI` sets the accent colour used across every window (any `#rrggbb`) and the speed unit for vehicle stats (`kmh` / `mph`).
 
 `Config.TestDrive` sets the duration, cooldown, max range, whether showroom cars can be test driven, and the private instance.
 

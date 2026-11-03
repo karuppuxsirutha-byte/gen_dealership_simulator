@@ -125,6 +125,12 @@ Config.Logistics = {
     },
 }
 
+-- UI look & feel
+Config.UI = {
+    accent = '#3d8bff',   -- any #rrggbb colour
+    speedUnit = 'kmh',    -- 'kmh' | 'mph'
+}
+
 Config.DefaultBlip = { enabled = true, sprite = 326, color = 3, scale = 0.8 }
 
 Config.Categories = {
